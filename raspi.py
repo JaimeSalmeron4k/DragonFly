@@ -1033,8 +1033,8 @@ class RedTeamApp(tk.Tk):
             
         for iface in interfaces:
             def comando_iface(i=iface):
-                subprocess.run(["sudo", "airmon-ng", "check", "kill"],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                #subprocess.run(["sudo", "airmon-ng", "check", "kill"],
+                               #stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 subprocess.run(["sudo", "airmon-ng", "start", i],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.ejecutar_comando(f"sudo airmon-ng start {i}",
@@ -1065,7 +1065,7 @@ class RedTeamApp(tk.Tk):
     def _wifi_escanear_redes_handshake(self, iface):
         self.wifi_state = {"iface": iface, "mon_iface": None}
         self.escribir_consola(f"[*] Modo monitor en {iface}...")
-        subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        #subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["sudo", "airmon-ng", "start", iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         mon = f"{iface}mon" if os.path.exists(f"/sys/class/net/{iface}mon") else iface
         self.wifi_state["mon_iface"] = mon
@@ -1194,7 +1194,7 @@ class RedTeamApp(tk.Tk):
 
     def _evil_twin_escanear_redes(self, deauth_iface):
         self.wifi_state["deauth_iface"] = deauth_iface
-        subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        #subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["sudo", "airmon-ng", "start", deauth_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         mon = f"{deauth_iface}mon" if os.path.exists(f"/sys/class/net/{deauth_iface}mon") else deauth_iface
         self.wifi_state["mon_deauth"] = mon
@@ -1570,7 +1570,7 @@ if __name__ == "__main__":
 
     def _deauth_escanear(self, iface):
         self.wifi_state = {"iface": iface}
-        subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        #subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["sudo", "airmon-ng", "start", iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         mon = f"{iface}mon" if os.path.exists(f"/sys/class/net/{iface}mon") else iface
         self.wifi_state["mon_iface"] = mon

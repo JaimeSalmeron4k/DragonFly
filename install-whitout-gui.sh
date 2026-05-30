@@ -77,7 +77,7 @@ instalar_dependencias() {
         network-manager bluez rfkill \
         xserver-xorg xinit x11-xserver-utils \
         xserver-xorg-input-libinput xserver-xorg-input-evdev \
-        openbox xfonts-base xfonts-75dpi xserver-xorg-video-fbdev
+        openbox xfonts-base xfonts-75dpi xserver-xorg-video-fbdev python3-pil python3-pil.imagetk
 
     print_center "[+] Dependencias instaladas correctamente." "${GREEN}"
     sleep 2

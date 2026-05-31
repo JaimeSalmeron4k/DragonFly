@@ -88,14 +88,8 @@ def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None
 
         while True:
             linea = proc_responder.stdout.readline()
-            if not linea:
-                if proc_responder.poll() is not None:
-                    break
-                else:
-                    # Pausa mínima para no saturar la CPU si la tubería está cerrándose
-                    time.sleep(0.1) 
-                    continue
-            
+            if not linea and proc_responder.poll() is not None:
+                break
             if linea:
                 log(linea.strip())
 
@@ -128,10 +122,9 @@ def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None
             log(f"[*] Organizando evidencia en: {os.path.basename(session_dir)}")
             os.makedirs(session_dir, exist_ok=True)
             
-            # Usar 'sh -c' garantiza que el intérprete de root sea quien expanda el asterisco (*),
-            # resolviendo el problema de archivos no encontrados (permission denied silencioso).
-            os.system(f"sudo sh -c 'mv /usr/share/responder/logs/* {session_dir}/' 2>/dev/null")
-            os.system(f"sudo sh -c 'mv /opt/Responder/logs/* {session_dir}/' 2>/dev/null")
+            # Usamos MV (mover) para evitar que sesiones futuras muestren hashes de ataques viejos
+            os.system(f"sudo mv /usr/share/responder/logs/* {session_dir}/ 2>/dev/null")
+            os.system(f"sudo mv /opt/Responder/logs/* {session_dir}/ 2>/dev/null")
             
             os.system(f"sudo chmod -R 777 {session_dir} 2>/dev/null")
             

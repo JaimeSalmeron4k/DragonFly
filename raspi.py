@@ -2116,6 +2116,41 @@ ln -s functions/ecm.usb0 configs/c.1/
         import gc
         gc.collect()
 
+    def iniciar_ataque_poison_hilo(self):
+        import network_modules.poison_logic as poison_logic
+        
+        # Intercambio de colores UI
+        self.btn_ejecutar_poison.config(state="disabled", bg="#d9d9d9", fg="black")
+        self.btn_detener_poison.config(state="normal", bg="#B71C1C", fg="white", activebackground="#880E4F")
+
+        # Función puente segura para Tkinter
+        def actualizar_consola_safe(texto):
+            self.after(0, lambda: self._insertar_texto_poison(texto))
+
+        # IMPORTANTE: El gadget de red USB en la Raspberry Zero siempre crea la interfaz "usb0", no "eth1"
+        hilo = threading.Thread(target=poison_logic.iniciar_ataque_red, args=("usb0", actualizar_consola_safe))
+        hilo.daemon = True
+        hilo.start()
+
+    def _insertar_texto_poison(self, texto):
+        if hasattr(self, 'consola'):
+            self.consola.config(state='normal')
+            self.consola.insert("end", texto)
+            self.consola.see("end")
+
+    def accion_boton_detener_poison(self):
+        self.escribir_consola("\n[!] Deteniendo servicios y guardando logs...")
+        
+        import subprocess
+        subprocess.run(["sudo", "pkill", "-f", "responder"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "pkill", "-f", "dnsmasq"], stderr=subprocess.DEVNULL)
+        
+        # Restaurar UI
+        self.btn_ejecutar_poison.config(style='Red.TButton')
+        self.btn_ejecutar_poison.state(['!disabled'])
+        self.btn_detener_poison.config(style='Gray.TButton')
+        self.btn_detener_poison.state(['disabled'])
+
     def accion_boton_lanzar_poison(self):
         import threading
         
@@ -2136,25 +2171,13 @@ ln -s functions/ecm.usb0 configs/c.1/
                                 args=("usb0", self.escribir_consola, session_dir))
         hilo.daemon = True
         hilo.start()
-
-    def accion_boton_detener_poison(self):
-        self.escribir_consola("\n[!] Deteniendo servicios y guardando logs...")
         
-        import subprocess
-        subprocess.run(["sudo", "pkill", "-f", "responder"], stderr=subprocess.DEVNULL)
-        subprocess.run(["sudo", "pkill", "-f", "dnsmasq"], stderr=subprocess.DEVNULL)
-        
-        # Restaurar UI
-        self.btn_ejecutar_poison.config(style='Red.TButton')
-        self.btn_ejecutar_poison.state(['!disabled'])
-        self.btn_detener_poison.config(style='Gray.TButton')
-        self.btn_detener_poison.state(['disabled'])
 
     def _poison_explorar_logs(self):
         # Magia negra: Reutilizamos el explorador de archivos que ya usas para Nmap/WiFi
         # Creará el menú de navegación de carpetas de forma automática.
-        self._mostrar_explorador_generico(BASE_DIR_POISON, "LOGS POISON", self.show_poison_menu) 
-
+        self._mostrar_explorador_generico(BASE_DIR_POISON, "LOGS POISON", self.show_poison_menu)
+        
     # ==========================================
     # MENÚ DESTRUCCION
     # ==========================================

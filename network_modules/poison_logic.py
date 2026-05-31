@@ -86,33 +86,17 @@ def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None
             bufsize=1
         )
 
-        import select
-
         while True:
-            try:
-                # select con timeout de 1 segundo evita que readline() congele el script
-                listos, _, _ = select.select([proc_responder.stdout], [], [], 1.0)
-            except ValueError:
-                # Si el proceso se destruyó abruptamente desde raspi.py y el pipe se cerró
+            linea = proc_responder.stdout.readline()
+            if not linea and proc_responder.poll() is not None:
                 break
-                
-            if listos:
-                linea = proc_responder.stdout.readline()
-                if not linea:
-                    # Si ya no hay texto (EOF) y el proceso base terminó
-                    if proc_responder.poll() is not None:
-                        break
-                else:
-                    log(linea.strip())
-            else:
-                # Si pasó 1 segundo sin texto, comprobamos si presionaste el botón "Detener"
-                if proc_responder.poll() is not None:
-                    break
+            if linea:
+                log(linea.strip())
 
     except Exception as e:
         log(f"\n[!] Error crítico: {e}")
     finally:
-        log("\n[*] Deteniendo ataque y guardando logs...")
+        log("\n[*] Deteniendo procesos y restaurando red...")
         
         if dns_proc:
             try: os.system(f"sudo kill {dns_proc.pid} > /dev/null 2>&1")
@@ -124,30 +108,24 @@ def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None
             
         os.system("sudo pkill -f responder > /dev/null 2>&1")
         os.system("sudo pkill -f dnsmasq > /dev/null 2>&1")
-        
-        # =========================================================
-        # SE ELIMINÓ: sudo ip addr flush dev {interface}
-        # SE ELIMINÓ: sudo sysctl -w net.ipv4.ip_forward=0
-        # Al quitar esto, usb0 mantiene su configuración y la 
-        # laptop NO pierde la Wired Connection.
-        # =========================================================
+        os.system("sudo sysctl -w net.ipv4.ip_forward=0 > /dev/null")
+        os.system(f"sudo ip addr flush dev {interface} > /dev/null 2>&1")
         
         if os.path.exists("dnsmasq_temp.conf"):
             try: os.remove("dnsmasq_temp.conf")
             except: pass
             
         # ==========================================
-        # GUARDADO EXITOSO DE EVIDENCIA
+        # GUARDADO DE LOGS EN SESIÓN ESPECÍFICA
         # ==========================================
         if session_dir:
             log(f"[*] Organizando evidencia en: {os.path.basename(session_dir)}")
             os.makedirs(session_dir, exist_ok=True)
             
-            # Usar sh -c garantiza que los permisos Root evalúen el asterisco (*) 
-            # solucionando el fallo silencioso al mover los archivos
-            os.system(f"sudo sh -c 'mv /usr/share/responder/logs/* {session_dir}/' 2>/dev/null")
-            os.system(f"sudo sh -c 'mv /opt/Responder/logs/* {session_dir}/' 2>/dev/null")
+            # Usamos MV (mover) para evitar que sesiones futuras muestren hashes de ataques viejos
+            os.system(f"sudo mv /usr/share/responder/logs/* {session_dir}/ 2>/dev/null")
+            os.system(f"sudo mv /opt/Responder/logs/* {session_dir}/ 2>/dev/null")
             
             os.system(f"sudo chmod -R 777 {session_dir} 2>/dev/null")
             
-        log("[+] Ataque finalizado. Conexión RNDIS/ECM preservada.")
+        log("[+] Sistema restaurado. ¡Cacería finalizada!")

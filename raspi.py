@@ -1955,16 +1955,15 @@ if __name__ == "__main__":
     def _cambiar_modo_usb(self, modo):
         self.escribir_consola(f"[*] Preparando perfil USB: {modo.upper()}...")
 
-        # 1. Detectar la ruta correcta de config.txt (depende de la versión de RaspiOS)
         cfg = "/boot/firmware/config.txt" if os.path.exists("/boot/firmware/config.txt") else "/boot/config.txt"
         gadget_script = "/usr/local/bin/usb_gadget.sh"
         service_path = "/etc/systemd/system/usb_gadget.service"
 
-        # 2. Crear el servicio systemd si no existe para ejecutar el script al inicio
+        # 1. Crear el servicio systemd si no existe
         if not os.path.exists(service_path):
             self.escribir_consola("[*] Creando servicio systemd para el gadget...")
             servicio_systemd = """[Unit]
-Description=USB HID Gadget Initialization
+Description=USB HID/Net Gadget Initialization
 After=systemd-modules-load.service
 
 [Service]
@@ -1977,35 +1976,106 @@ WantedBy=sysinit.target
 """
             subprocess.run(f"sudo sh -c 'echo \"{servicio_systemd}\" > {service_path}'", shell=True)
             subprocess.run("sudo systemctl daemon-reload", shell=True)
-            subprocess.run(f"sudo chmod +x {gadget_script}", shell=True)
 
-        # 3. Limpiar cualquier configuración previa de dwc2
+        # 2. Limpiar configuración dwc2
         subprocess.run(f"sudo sed -i '/dtoverlay=dwc2/d' {cfg}", shell=True)
 
         if modo == "host":
-            # ==========================================
-            # MODO HOST (ANTENA WIFI / TECLADO / ADAPTADORES)
-            # ==========================================
-            # Forzamos el modo host y desactivamos el script del gadget
             subprocess.run(f"sudo sh -c 'echo \"dtoverlay=dwc2,dr_mode=host\" >> {cfg}'", shell=True)
             subprocess.run("sudo systemctl disable usb_gadget.service", shell=True, stderr=subprocess.DEVNULL)
-            self.escribir_consola("[*] Controlador configurado como Host puro.")
-
+            self.escribir_consola("[*] Controlador configurado como Host puro (Antena/Teclado externo).")
         else:
-            # ==========================================
-            # MODO GADGET (RUBBER DUCKY)
-            # ==========================================
-            # Forzamos modo periférico y habilitamos el servicio para que arranque con el sistema
             subprocess.run(f"sudo sh -c 'echo \"dtoverlay=dwc2,dr_mode=peripheral\" >> {cfg}'", shell=True)
             subprocess.run("sudo systemctl enable usb_gadget.service", shell=True, stderr=subprocess.DEVNULL)
-            self.escribir_consola("[*] Módulos Gadget armados y servicio activado.")
+            
+            # --- GENERADOR DINÁMICO DE LIBCOMPOSITE ---
+            # Este script borra la configuración previa en memoria RAM (configfs) y monta la nueva
+            sh_script = f"""#!/bin/bash
+modprobe libcomposite
+cd /sys/kernel/config/usb_gadget/
 
-        self.escribir_consola("[+] Aplicado. Apagando en 3 segundos...")
-        self.after(3000, lambda: subprocess.run("sudo poweroff", shell=True))
+# LIMPIEZA TOTAL DE GADGETS PREVIOS
+if [ -d dragonfly ]; then
+  echo "" > dragonfly/UDC
+  rm -f dragonfly/configs/c.1/hid.usb0
+  rm -f dragonfly/configs/c.1/rndis.usb0
+  rm -f dragonfly/configs/c.1/ecm.usb0
+  rm -f dragonfly/os_desc/c.1
+  rmdir dragonfly/configs/c.1/strings/0x409
+  rmdir dragonfly/configs/c.1
+  rmdir dragonfly/functions/hid.usb0 2>/dev/null
+  rmdir dragonfly/functions/rndis.usb0 2>/dev/null
+  rmdir dragonfly/functions/ecm.usb0 2>/dev/null
+  rmdir dragonfly/strings/0x409
+  rmdir dragonfly
+fi
 
-    # =========================================================================
-    # MODULO: ENVENENAMIENTO DE RED (POISON) - INTERFACING UNIFICADO COMPLETO
-    # =========================================================================
+mkdir -p dragonfly
+cd dragonfly
+echo 0x1d6b > idVendor
+echo 0x0104 > idProduct
+echo 0x0100 > bcdDevice
+echo 0x0200 > bcdUSB
+mkdir -p strings/0x409
+echo "fedcba9876543210" > strings/0x409/serialnumber
+echo "DragonFly" > strings/0x409/manufacturer
+"""
+            # Nombres según el ataque
+            if modo == "gadget":
+                sh_script += "echo \"DragonFly HID (Keyboard)\" > strings/0x409/product\n"
+            elif modo == "rndis":
+                sh_script += "echo \"DragonFly RNDIS Ethernet\" > strings/0x409/product\n"
+            elif modo == "ecm":
+                sh_script += "echo \"DragonFly CDC ECM Ethernet\" > strings/0x409/product\n"
+
+            sh_script += """
+mkdir -p configs/c.1/strings/0x409
+echo "Config 1" > configs/c.1/strings/0x409/configuration
+echo 250 > configs/c.1/MaxPower
+"""
+            # Lógica para DUCKY (Teclado)
+            if modo == "gadget":
+                sh_script += """
+mkdir -p functions/hid.usb0
+echo 1 > functions/hid.usb0/protocol
+echo 1 > functions/hid.usb0/subclass
+echo 8 > functions/hid.usb0/report_length
+echo -ne \\\\x05\\\\x01\\\\x09\\\\x06\\\\xa1\\\\x01\\\\x05\\\\x07\\\\x19\\\\xe0\\\\x29\\\\xe7\\\\x15\\\\x00\\\\x25\\\\x01\\\\x75\\\\x01\\\\x95\\\\x08\\\\x81\\\\x02\\\\x95\\\\x01\\\\x75\\\\x08\\\\x81\\\\x03\\\\x95\\\\x05\\\\x75\\\\x01\\\\x05\\\\x08\\\\x19\\\\x01\\\\x29\\\\x05\\\\x91\\\\x02\\\\x95\\\\x01\\\\x75\\\\x03\\\\x91\\\\x03\\\\x95\\\\x06\\\\x75\\\\x08\\\\x15\\\\x00\\\\x25\\\\x65\\\\x05\\\\x07\\\\x19\\\\x00\\\\x29\\\\x65\\\\x81\\\\x00\\\\xc0 > functions/hid.usb0/report_desc
+ln -s functions/hid.usb0 configs/c.1/
+"""
+            # Lógica para RNDIS (Windows)
+            elif modo == "rndis":
+                sh_script += """
+mkdir -p functions/rndis.usb0
+echo 1 > os_desc/use
+echo 0xcd > os_desc/b_vendor_code
+echo MSFT100 > os_desc/qw_sign
+mkdir -p functions/rndis.usb0/os_desc/interface.rndis
+echo RNDIS > functions/rndis.usb0/os_desc/interface.rndis/compatible_id
+echo 5162001 > functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
+ln -s functions/rndis.usb0 configs/c.1/
+ln -s configs/c.1 os_desc
+"""
+            # Lógica para ECM (Mac/Linux)
+            elif modo == "ecm":
+                sh_script += """
+mkdir -p functions/ecm.usb0
+ln -s functions/ecm.usb0 configs/c.1/
+"""
+
+            # Comando final para encender el USB
+            sh_script += "ls /sys/class/udc > UDC\n"
+
+            # Guardar y aplicar
+            with open("/tmp/usb_gadget.sh", "w") as f:
+                f.write(sh_script)
+            
+            subprocess.run(f"sudo mv /tmp/usb_gadget.sh {gadget_script}", shell=True)
+            subprocess.run(f"sudo chmod +x {gadget_script}", shell=True)
+            self.escribir_consola(f"[*] Perfil generado y limpiado. (Modo: {modo.upper()})")
+
+        self.escribir_consola("[+] Aplicado. REINICIANDO el sistema en 3 segundos...")
+        self.after(3000, lambda: subprocess.run("sudo reboot", shell=True))
     
     def show_poison_menu(self):
         """Limpia la pantalla principal y dibuja la interfaz ligera de Poison con los colores oficiales."""
@@ -2063,56 +2133,39 @@ WantedBy=sysinit.target
         import gc
         gc.collect()
 
-    def levantar_red_poison(self):
-        """Configura la interfaz eth1 y los servicios de red para el ataque."""
-        try:
-            self.consola.insert("end", "\n[*] Configurando interfaz para Poison: eth1\n")
-            self.consola.see("end")
-            
-            import subprocess
-            subprocess.run(["sudo", "ip", "link", "set", "dev", "eth1", "up"], check=True)
-            subprocess.run(["sudo", "ip", "addr", "add", "1.0.0.1/8", "dev", "eth1"], check=True)
-            subprocess.run(["sudo", "ip", "addr", "add", "fe80::1/64", "dev", "eth1", "scope", "link"], check=True)
-            subprocess.run(["sudo", "systemctl", "start", "dnsmasq"], check=True)
-            return True
-        except Exception as e:
-            self.consola.insert("end", f"[AVISO] Falló configuración física de red: {e}\n")
-            self.consola.insert("end", "[!] Activando simulación visual en consola.\n")
-            self.consola.see("end")
-            return True 
+    def iniciar_ataque_poison_hilo(self):
+        import network_modules.poison_logic as poison_logic
+        
+        # Intercambio de colores UI
+        self.btn_ejecutar_poison.config(state="disabled", bg="#d9d9d9", fg="black")
+        self.btn_detener_poison.config(state="normal", bg="#B71C1C", fg="white", activebackground="#880E4F")
 
-    def detener_red_poison(self):
-        """Limpia los servicios de envenenamiento y restaura la interfaz eth1."""
-        self.consola.insert("end", "\n[!] Deteniendo servicios Poison y recopilando evidencia...\n")
-        self.consola.see("end")
+        # Función puente segura para Tkinter
+        def actualizar_consola_safe(texto):
+            self.after(0, lambda: self._insertar_texto_poison(texto))
+
+        # IMPORTANTE: El gadget de red USB en la Raspberry Zero siempre crea la interfaz "usb0", no "eth1"
+        hilo = threading.Thread(target=poison_logic.iniciar_ataque_red, args=("usb0", actualizar_consola_safe))
+        hilo.daemon = True
+        hilo.start()
+
+    def _insertar_texto_poison(self, texto):
+        if hasattr(self, 'consola'):
+            self.consola.config(state='normal')
+            self.consola.insert("end", texto)
+            self.consola.see("end")
+
+    def accion_boton_detener_poison(self):
+        self._insertar_texto_poison("\n[!] Deteniendo servicios y guardando logs...\n")
         
         import subprocess
-        import os
-        
+        # Al matar Responder, poison_logic.py detectará el fin y limpiará las rutas automáticamente
         subprocess.run(["sudo", "pkill", "-f", "responder"], stderr=subprocess.DEVNULL)
-        subprocess.run(["sudo", "fuser", "-k", "80/tcp"], stderr=subprocess.DEVNULL)
-        subprocess.run(["sudo", "fuser", "-k", "445/tcp"], stderr=subprocess.DEVNULL)
-        subprocess.run(["sudo", "systemctl", "stop", "dnsmasq"], stderr=subprocess.DEVNULL)
-        subprocess.run(["sudo", "ip", "addr", "flush", "dev", "eth1"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "pkill", "-f", "dnsmasq"], stderr=subprocess.DEVNULL)
         
-        ruta_proyecto = os.path.dirname(os.path.abspath(__file__))
-        ruta_logs_local = os.path.join(ruta_proyecto, "logs")
-        os.makedirs(ruta_logs_local, exist_ok=True)
-        os.system(f"sudo mv /usr/share/responder/logs/* {ruta_logs_local}/ 2>/dev/null")
-        
-        self.consola.insert("end", "[OK] Red restaurada de manera segura. Evidencia guardada en /logs.\n")
-        self.consola.see("end")
-
-    def iniciar_ataque_poison_hilo(self):
-        """Maneja la ejecución asíncrona intercambiando los colores de los botones de forma segura."""
-        if self.levantar_red_poison():
-            self.consola.insert("end", "[+] INTERFAZ ACTIVA: eth1\n")
-            self.consola.insert("end", "[*] Ejecutando suite de envenenamiento en segundo plano...\n")
-            self.consola.see("end")
-            
-            # INTERCAMBIO DE COLORES: Lanzar se apaga a gris; Detener se enciende en Rojo
-            self.btn_ejecutar_poison.config(state="disabled", bg="#d9d9d9", fg="black")
-            self.btn_detener_poison.config(state="normal", bg="#B71C1C", fg="white", activebackground="#880E4F")
+        # Restaurar UI
+        self.btn_ejecutar_poison.config(state="normal", bg="#B71C1C", fg="white")
+        self.btn_detener_poison.config(state="disabled", bg="#d9d9d9", fg="black")
 
     def accion_boton_lanzar_poison(self):
         """Punto de entrada seguro mediante hilos para el lanzamiento."""
@@ -2121,16 +2174,6 @@ WantedBy=sysinit.target
         hilo.daemon = True
         hilo.start()
         
-    def accion_boton_detener_poison(self):
-        """Detiene el ataque de red y reestablece los controles gráficos originales."""
-        self.detener_red_poison()
-        
-        # RESTAURACIÓN: Lanzar vuelve a su Rojo original; Detener se apaga a gris
-        self.btn_ejecutar_poison.config(state="normal", bg="#B71C1C", fg="white")
-        
-        import os
-        color_gris = "SystemButtonFace" if os.name == "nt" else "#d9d9d9"
-        self.btn_detener_poison.config(state="disabled", bg=color_gris, fg="black")
 
     def mostrar_logs_poison(self):
         """Busca y proyecta los reportes de auditoría capturados limpiando las secuencias ANSI."""
@@ -2251,6 +2294,7 @@ WantedBy=sysinit.target
         opciones = [
             ("Activar Perfil: ANTENA WIFI", lambda: self._cambiar_modo_usb("host")),
             ("Activar Perfil: RUBBER DUCKY", lambda: self._cambiar_modo_usb("gadget")),
+            ("Activar Perfil: POISON (Red USB)", self._utils_poison_menu),
             ("Conectar a Red WiFi", self._utils_wifi_seleccionar_interfaz),
             ("Redes WiFi Guardadas", self._utils_wifi_redes_guardadas), # NUEVA OPCIÓN
             ("Estado de Red WiFi", self._utils_wifi_estado),
@@ -2290,6 +2334,29 @@ WantedBy=sysinit.target
         self.mostrar_consola(parent=scroll_utils.scrollable_frame)
         gc.collect()
         
+
+    def _utils_poison_menu(self):
+        self.limpiar_main_frame()
+        self.agregar_boton_atras(self.show_utils_menu)
+        ttk.Label(self.main_frame, text="PERFIL POISON (RED USB)", style='Title.TLabel').pack(pady=2)
+
+        scroll = ScrollableFrame(self.main_frame, max_items=10)
+        scroll.pack(fill='both', expand=True, padx=2, pady=2)
+        
+        ttk.Label(scroll.scrollable_frame, text="Selecciona el OS de la víctima:", style='Gray.TLabel').pack(pady=5)
+
+        # Botón para víctimas Windows (Usa protocolo RNDIS)
+        scroll.add_button(text="Activar Windows (RNDIS)", 
+                          command=lambda: self._cambiar_modo_usb("rndis"), 
+                          style='Danger.TButton', width=28)
+                          
+        # Botón para víctimas Mac/Linux (Usa protocolo CDC ECM)
+        scroll.add_button(text="Activar Mac/Linux (CDC ECM)", 
+                          command=lambda: self._cambiar_modo_usb("ecm"), 
+                          style='Red.TButton', width=28)
+
+        self.mostrar_consola(parent=scroll.scrollable_frame)
+
     # -------------------- NUEVAS FUNCIONES DE SISTEMA Y RED --------------------
 
     def _utils_wifi_redes_guardadas(self):

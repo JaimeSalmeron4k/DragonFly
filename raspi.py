@@ -1963,6 +1963,7 @@ if __name__ == "__main__":
         gadget_script = "/usr/local/bin/usb_gadget.sh"
         service_path = "/etc/systemd/system/usb_gadget.service"
 
+
         # 1. Crear el servicio systemd si no existe
         if not os.path.exists(service_path):
             self.escribir_consola("[*] Creando servicio systemd para el gadget...")
@@ -1981,17 +1982,19 @@ WantedBy=sysinit.target
             subprocess.run(f"sudo sh -c 'echo \"{servicio_systemd}\" > {service_path}'", shell=True)
             subprocess.run("sudo systemctl daemon-reload", shell=True)
 
-        # 2. Limpiar configuración dwc2
-        subprocess.run(f"sudo sed -i '/dtoverlay=dwc2/d' {cfg}", shell=True)
 
+        subprocess.run(f'sudo sed -i "/^dtoverlay=dwc2/d" {cfg}', shell=True)
+        
         if modo == "host":
-            subprocess.run(f"sudo sh -c 'echo \"dtoverlay=dwc2,dr_mode=host\" >> {cfg}'", shell=True)
-            subprocess.run("sudo systemctl disable usb_gadget.service", shell=True, stderr=subprocess.DEVNULL)
-            self.escribir_consola("[*] Controlador configurado como Host puro (Antena/Teclado externo).")
+            subprocess.run(f'sudo sh -c \'echo "dtoverlay=dwc2,dr_mode=host" >> {cfg}\'', shell=True)
+            subprocess.run("sudo systemctl disable usb_gadget.service 2>/dev/null", shell=True)
+            self.log("[*] Controlador configurado como Host puro.")
         else:
-            subprocess.run(f"sudo sh -c 'echo \"dtoverlay=dwc2,dr_mode=peripheral\" >> {cfg}'", shell=True)
-            subprocess.run("sudo systemctl enable usb_gadget.service", shell=True, stderr=subprocess.DEVNULL)
-            
+            subprocess.run(f'sudo sh -c \'echo "dtoverlay=dwc2,dr_mode=peripheral" >> {cfg}\'', shell=True)
+            subprocess.run("sudo systemctl enable usb_gadget.service 2>/dev/null", shell=True)
+
+
+
             # --- GENERADOR DINÁMICO DE LIBCOMPOSITE ---
             # Este script borra la configuración previa en memoria RAM (configfs) y monta la nueva
             sh_script = f"""#!/bin/bash

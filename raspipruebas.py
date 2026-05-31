@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, simpledialog
+from PIL import Image, ImageTk
 import subprocess
 import threading
 import os
@@ -174,14 +175,14 @@ class ScrollableFrame(tk.Frame):
         self.canvas.configure(scrollregion=(0, 0, 0, 0))
         gc.collect()
 
-    def add_button(self, text, command, style='Gray.TButton', width=None):
+    def add_button(self, text, command, style='Menu.TButton', width=None):
         current_children = len(self.scrollable_frame.winfo_children())
         if current_children >= self.max_items:
             warning_label = tk.Label(self.scrollable_frame,
                                      text="[!] Demasiados resultados. Revisa desde consola.",
                                      bg=self.bg_color, fg=COLOR_TEXTO_TERMINAL,
                                      font=('Helvetica', 9))
-            warning_label.pack(fill='x', padx=5, pady=2)
+            warning_label.pack(fill='x', padx=10, pady=4)
             return None
 
         if width is None:
@@ -189,7 +190,9 @@ class ScrollableFrame(tk.Frame):
 
         btn = ttk.Button(self.scrollable_frame, text=text, style=style, width=width)
         btn.configure(command=command)
-        btn.pack(fill='x', padx=2, pady=2)
+        
+        # Aplicación de padding externo para Flat Design (padx=10, pady=4)
+        btn.pack(fill='x', padx=10, pady=4)
         return btn
 
     def add_widget(self, widget, **pack_options):
@@ -403,6 +406,8 @@ class RedTeamApp(tk.Tk):
         self.resizable(True, True)
 
         # Estilos ttk completamente oscuros (sin bordes blancos)
+
+        
         style = ttk.Style()
         style.theme_use('clam')
 
@@ -442,6 +447,13 @@ class RedTeamApp(tk.Tk):
                   background=[('active', COLOR_BOTON_ROJO), ('pressed', COLOR_BOTON_HOVER)],
                   arrowcolor=[('active', 'white')])
         
+        # Estilo para botones con iconos (App Launcher Style)
+        style.configure('AppIcon.TButton', background=COLOR_FONDO_PRINCIPAL, foreground='white',
+                        relief='flat', font=('Helvetica', 9, 'bold'), borderwidth=0)
+        style.map('AppIcon.TButton',
+                  background=[('active', COLOR_BOTON_HOVER)],
+                  bordercolor=[('focus', COLOR_FONDO_PRINCIPAL)])
+
 
 
         style.configure('Red.TButton', background=COLOR_BOTON_ROJO, foreground='white',
@@ -559,27 +571,28 @@ class RedTeamApp(tk.Tk):
         if parent is None:
             parent = self.main_frame
             
-        # Contenedor para alinear la terminal y su barra de scroll
-        self.console_frame = tk.Frame(parent, bg='#0a0a0a')
-        self.console_frame.pack(fill='x', padx=2, pady=2)
+        # Contenedor aislado con fondo casi negro (#050505) y borde visible (#333333)
+        self.console_frame = tk.Frame(parent, bg='#050505', 
+                                      highlightbackground="#333333", highlightcolor="#333333", 
+                                      highlightthickness=1)
+        self.console_frame.pack(fill='x', padx=5, pady=6)
 
-        self.console_textbox = tk.Text(self.console_frame, height=4, bg='#0a0a0a',
-                                       fg=COLOR_TEXTO_TERMINAL, font=('Courier', 9),
+        # Terminal text-box con fuente en negrita (bold)
+        self.console_textbox = tk.Text(self.console_frame, height=4, bg='#050505',
+                                       fg=COLOR_TEXTO_TERMINAL, font=('Courier', 9, 'bold'),
                                        state='disabled', highlightthickness=0,
                                        borderwidth=0, relief='flat')
                                        
-        # Scrollbar vertical enlazada a la terminal
         self.console_scrollbar = ttk.Scrollbar(self.console_frame, orient="vertical", 
                                                command=self.console_textbox.yview,
                                                style='Dark.Vertical.TScrollbar')
                                                
         self.console_textbox.configure(yscrollcommand=self.console_scrollbar.set)
         
-        # Empaquetado: barra a la derecha, texto llenando el resto
         self.console_scrollbar.pack(side="right", fill="y")
-        self.console_textbox.pack(side="left", fill="x", expand=True)
+        # Padding interno ligero en la caja de texto para que las letras no toquen el borde
+        self.console_textbox.pack(side="left", fill="x", expand=True, padx=(4, 0), pady=2)
 
-        # Eventos táctiles para arrastrar el texto con el dedo
         self.console_textbox.bind("<Button-1>", self._on_console_touch_start)
         self.console_textbox.bind("<B1-Motion>", self._on_console_touch_drag)
 
@@ -738,25 +751,97 @@ class RedTeamApp(tk.Tk):
     # ---------------- INICIO ----------------
     def show_inicio_menu(self):
         self.limpiar_main_frame()
-        ttk.Label(self.main_frame, text="DRAGON FLY SYSTEM", style='Title.TLabel').pack(pady=(8,2))
-        ttk.Label(self.main_frame, text="Red Team Toolbox", style='Gray.TLabel').pack(pady=(0,6))
+        
+        # Títulos de cabecera stándar
+        ttk.Label(self.main_frame, text="DRAGON FLY SYSTEM", style='Title.TLabel').pack(pady=(8, 2))
+        ttk.Label(self.main_frame, text="Red Team Toolbox", style='Gray.TLabel').pack(pady=(0, 6))
 
-        # Envolvemos el menú principal en un ScrollableFrame
-        scroll_menu = ScrollableFrame(self.main_frame, max_items=10)
+        # Inicializar el diccionario de caché en la instancia global si no existe
+        if not hasattr(self, 'icon_cache'):
+            self.icon_cache = {}
+
+        # 1. DETECCIÓN DINÁMICA DE RESOLUCIÓN (Responsivo)
+        # Intentar obtener el ancho actual de la interfaz; si aún no se mapea, recurre al ancho de pantalla global
+        ancho_actual = self.winfo_width()
+        if ancho_actual <= 1:
+            ancho_actual = self.winfo_screenwidth()
+
+        # Ajustar la distribución de la cuadrícula según el espacio en píxeles de la pantalla
+        if ancho_actual <= 320:         # Pantallas pequeñas de 2.4" (Resolución 320x240)
+            columnas = 2
+            tamano_icono = (44, 44)
+            padding_celda = 6
+        elif ancho_actual <= 480:       # Pantallas medianas de 3.5" (Resolución 480x320)
+            columnas = 3
+            tamano_icono = (54, 54)
+            padding_celda = 10
+        else:                           # Monitores o ventanas de escritorio grandes
+            columnas = 4
+            tamano_icono = (72, 72)
+            padding_celda = 16
+
+        # Envolver la vista en el ScrollableFrame para habilitar el desplazamiento si hay desbordamiento vertical
+        scroll_menu = ScrollableFrame(self.main_frame, max_items=15)
         scroll_menu.pack(fill='both', expand=True, padx=2, pady=2)
 
-        opciones = [
-            ("1. Reconocimiento", self.show_recon_menu),
-            ("2. MAC Changer", self.show_mac_menu),
-            ("3. Auditoría WiFi", self.show_wifi_menu),
-            ("4. NRF24 Jammer", self.show_nrf_jammer_menu),
-            ("5. Rubber Ducky", self.show_ducky_menu),
-            ("6. Utilidades OS", self.show_utils_menu),
-            ("7. Autodestruccion", self.show_self_destruct_menu)
-        ]
-        for texto, comando in opciones:
-            scroll_menu.add_button(text=texto, command=comando, style='Red.TButton', width=30)
+        # Marco de cuadrícula principal dentro del scroll frame
+        grid_frame = ttk.Frame(scroll_menu.scrollable_frame, style='Dark.TFrame')
+        grid_frame.pack(fill='both', expand=True, padx=4, pady=4)
 
+        # Mapeo de opciones del sistema con sus respectivas rutas de iconos
+        opciones = [
+            ("Recon", self.show_recon_menu, "icons/recon.png"),
+            ("MAC Changer", self.show_mac_menu, "icons/mac.png"),
+            ("Auditoría WiFi", self.show_wifi_menu, "icons/wifi.png"),
+            ("NRF24 Jammer", self.show_nrf_jammer_menu, "icons/jammer.png"),
+            ("Rubber Ducky", self.show_ducky_menu, "icons/ducky.png"),
+            ("PoisonTap", self.show_poison_menu, "icons/poison.png"),
+            ("Utilidades OS", self.show_utils_menu, "icons/utils.png"),
+            ("Autodestrucción", self.show_self_destruct_menu, "icons/destroy.png")
+        ]
+
+        # Evita que el Garbage Collector destruya las referencias de imagen del renderizado actual
+        self.current_icon_refs = []
+
+        for index, (texto, comando, icono_ruta) in enumerate(opciones):
+            fila = index // columnas
+            columna = index % columnas
+
+            # Crear una clave única para la caché basada en la ruta y el tamaño calculado
+            cache_key = (icono_ruta, tamano_icono)
+
+            if cache_key in self.icon_cache:
+                # Carga instantánea desde la memoria RAM
+                photo = self.icon_cache[cache_key]
+            else:
+                try:
+                    from PIL import Image, ImageTk
+                    img = Image.open(icono_ruta).resize(tamano_icono, Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self.icon_cache[cache_key] = photo  # Almacenar en caché para el próximo retorno
+                except Exception:
+                    # Mecanismo de respaldo (Fallback) en caso de ausencia de archivo o fallo de carga
+                    from PIL import Image, ImageTk
+                    img = Image.new('RGBA', tamano_icono, (0, 0, 0, 0))
+                    photo = ImageTk.PhotoImage(img)
+                    self.icon_cache[cache_key] = photo
+
+            self.current_icon_refs.append(photo)
+
+            # Control de espaciado: Un salto de línea '\n' al inicio del texto del botón empuja
+            # limpiamente el título hacia abajo del icono, cumpliendo con la separación vertical exacta
+            texto_con_espacio = f"\n{texto}"
+
+            # Construcción del botón integrado (Icono arriba, Texto abajo)
+            btn = ttk.Button(grid_frame, text=texto_con_espacio, image=photo, compound="top",
+                             style='AppIcon.TButton', command=comando)
+            
+            # El parámetro sticky="nsew" asegura que el botón se expanda para rellenar toda la celda táctil
+            btn.grid(row=fila, column=columna, padx=padding_celda, pady=padding_celda, sticky="nsew")
+
+            # Configuración de pesos para garantizar la elasticidad proporcional de las filas y columnas
+            grid_frame.grid_columnconfigure(columna, weight=1)
+            grid_frame.grid_rowconfigure(fila, weight=1)
     # ==========================================
     # MENÚ RECONOCIMIENTO (NMAP) 
     # ==========================================
@@ -1917,6 +2002,176 @@ WantedBy=sysinit.target
 
         self.escribir_consola("[+] Aplicado. Apagando en 3 segundos...")
         self.after(3000, lambda: subprocess.run("sudo poweroff", shell=True))
+
+    # =========================================================================
+    # MODULO: ENVENENAMIENTO DE RED (POISON) - INTERFACING UNIFICADO COMPLETO
+    # =========================================================================
+    
+    def show_poison_menu(self):
+        """Limpia la pantalla principal y dibuja la interfaz ligera de Poison con los colores oficiales."""
+        self.limpiar_main_frame()
+        
+        # Botón de regreso nativo adaptado al menú de inicio del grupo
+        self.agregar_boton_atras(self.show_inicio_menu) 
+        
+        # Título del Módulo usando los estilos del proyecto
+        ttk.Label(self.main_frame, text="ATAQUE POISON (LLMNR / mDNS)", style='Title.TLabel').pack(pady=5)
+
+        # Contenedor interno para organizar los elementos visuales
+        poison_frame = ttk.Frame(self.main_frame)
+        poison_frame.pack(fill='both', expand=True, padx=15, pady=5)
+
+        # 1. BOTONERA INFERIOR: Se empaqueta primero abajo para fijar su espacio real
+        btn_frame = ttk.Frame(poison_frame)
+        btn_frame.pack(fill='x', pady=5, side="bottom")
+
+        # Botón 1: Lanzar el ataque (Rojo nativo de Dragon-Fly)
+        self.btn_ejecutar_poison = tk.Button(
+            btn_frame, text="LANZAR ATAQUE", font=("Arial", 10, "bold"),
+            bg="#B71C1C", fg="white", activebackground="#880E4F",
+            command=self.accion_boton_lanzar_poison
+        )
+        self.btn_ejecutar_poison.pack(side="left", padx=5, expand=True, fill='x')
+
+        # Botón 2: Detener el ataque (Inicia apagado en gris)
+        self.btn_detener_poison = tk.Button(
+            btn_frame, text="DETENER ATAQUE", state="disabled", font=("Arial", 10, "bold"),
+            bg="#d9d9d9", fg="black",
+            command=self.accion_boton_detener_poison
+        )
+        self.btn_detener_poison.pack(side="left", padx=5, expand=True, fill='x')
+
+        # Botón 3: Ver Logs (Amarillo/Naranja estético del sistema)
+        self.btn_ver_logs_poison = tk.Button(
+            btn_frame, text="VER LOGS CAPTURADOS", font=("Arial", 10, "bold"),
+            bg="#FF9800", fg="black", activebackground="#E65100",
+            command=self.mostrar_logs_poison
+        )
+        self.btn_ver_logs_poison.pack(side="left", padx=5, expand=True, fill='x')
+
+        # 2. CONSOLA INTEGRADA: Se empaqueta arriba y toma de forma limpia el resto del espacio central
+        # Se añaden paddings (padx/pady) para que el texto respire y no se corte en los bordes
+        self.consola = tk.Text(
+            poison_frame, bg="black", fg="#00FF00", font=("Courier", 10),
+            padx=12, pady=12, insertbackground="white"
+        )
+        self.consola.pack(pady=5, fill='both', expand=True, side="top")
+        
+        self.consola.insert("end", "[*] Módulo Poison cargado con éxito. Listo para iniciar en eth1...\n")
+        self.consola.see("end")
+        
+        import gc
+        gc.collect()
+
+    def levantar_red_poison(self):
+        """Configura la interfaz eth1 y los servicios de red para el ataque."""
+        try:
+            self.consola.insert("end", "\n[*] Configurando interfaz para Poison: eth1\n")
+            self.consola.see("end")
+            
+            import subprocess
+            subprocess.run(["sudo", "ip", "link", "set", "dev", "eth1", "up"], check=True)
+            subprocess.run(["sudo", "ip", "addr", "add", "1.0.0.1/8", "dev", "eth1"], check=True)
+            subprocess.run(["sudo", "ip", "addr", "add", "fe80::1/64", "dev", "eth1", "scope", "link"], check=True)
+            subprocess.run(["sudo", "systemctl", "start", "dnsmasq"], check=True)
+            return True
+        except Exception as e:
+            self.consola.insert("end", f"[AVISO] Falló configuración física de red: {e}\n")
+            self.consola.insert("end", "[!] Activando simulación visual en consola.\n")
+            self.consola.see("end")
+            return True 
+
+    def detener_red_poison(self):
+        """Limpia los servicios de envenenamiento y restaura la interfaz eth1."""
+        self.consola.insert("end", "\n[!] Deteniendo servicios Poison y recopilando evidencia...\n")
+        self.consola.see("end")
+        
+        import subprocess
+        import os
+        
+        subprocess.run(["sudo", "pkill", "-f", "responder"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "fuser", "-k", "80/tcp"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "fuser", "-k", "445/tcp"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "systemctl", "stop", "dnsmasq"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "ip", "addr", "flush", "dev", "eth1"], stderr=subprocess.DEVNULL)
+        
+        ruta_proyecto = os.path.dirname(os.path.abspath(__file__))
+        ruta_logs_local = os.path.join(ruta_proyecto, "logs")
+        os.makedirs(ruta_logs_local, exist_ok=True)
+        os.system(f"sudo mv /usr/share/responder/logs/* {ruta_logs_local}/ 2>/dev/null")
+        
+        self.consola.insert("end", "[OK] Red restaurada de manera segura. Evidencia guardada en /logs.\n")
+        self.consola.see("end")
+
+    def iniciar_ataque_poison_hilo(self):
+        """Maneja la ejecución asíncrona intercambiando los colores de los botones de forma segura."""
+        if self.levantar_red_poison():
+            self.consola.insert("end", "[+] INTERFAZ ACTIVA: eth1\n")
+            self.consola.insert("end", "[*] Ejecutando suite de envenenamiento en segundo plano...\n")
+            self.consola.see("end")
+            
+            # INTERCAMBIO DE COLORES: Lanzar se apaga a gris; Detener se enciende en Rojo
+            self.btn_ejecutar_poison.config(state="disabled", bg="#d9d9d9", fg="black")
+            self.btn_detener_poison.config(state="normal", bg="#B71C1C", fg="white", activebackground="#880E4F")
+
+    def accion_boton_lanzar_poison(self):
+        """Punto de entrada seguro mediante hilos para el lanzamiento."""
+        import threading
+        hilo = threading.Thread(target=self.iniciar_ataque_poison_hilo)
+        hilo.daemon = True
+        hilo.start()
+        
+    def accion_boton_detener_poison(self):
+        """Detiene el ataque de red y reestablece los controles gráficos originales."""
+        self.detener_red_poison()
+        
+        # RESTAURACIÓN: Lanzar vuelve a su Rojo original; Detener se apaga a gris
+        self.btn_ejecutar_poison.config(state="normal", bg="#B71C1C", fg="white")
+        
+        import os
+        color_gris = "SystemButtonFace" if os.name == "nt" else "#d9d9d9"
+        self.btn_detener_poison.config(state="disabled", bg=color_gris, fg="black")
+
+    def mostrar_logs_poison(self):
+        """Busca y proyecta los reportes de auditoría capturados limpiando las secuencias ANSI."""
+        import os
+        ruta_proyecto = os.path.dirname(os.path.abspath(__file__))
+        ruta_logs_local = os.path.join(ruta_proyecto, "logs")
+        
+        self.consola.delete("1.0", "end") 
+        self.consola.insert("end", "[*] Analizando repositorio de registros locales...\n")
+        
+        if not os.path.exists(ruta_logs_local) or not os.listdir(ruta_logs_local):
+            self.consola.insert("end", "[!] No se han encontrado capturas de credenciales o hashes guardados aún.\n")
+            self.consola.see("end")
+            return
+
+        archivos = [os.path.join(ruta_logs_local, f) for f in os.listdir(ruta_logs_local) if os.path.isfile(os.path.join(ruta_logs_local, f))]
+        
+        if archivos:
+            archivo_reciente = max(archivos, key=os.path.getmtime)
+            nombre_corto = os.path.basename(archivo_reciente)
+            
+            self.consola.insert("end", f"[OK] Desplegando reporte de auditoría: {nombre_corto}\n")
+            self.consola.insert("end", "=====================================================================\n\n")
+            
+            try:
+                import re
+                with open(archivo_reciente, "r", encoding="utf-8", errors="ignore") as f:
+                    contenido = f.read()
+                    if contenido.strip() == "":
+                        self.consola.insert("end", "(El archivo está vacío. No se interceptaron solicitudes de red en esta sesión)")
+                    else:
+                        # Filtrado regex para remover códigos ANSI de consola de forma nativa
+                        patron_ansi = re.compile(r'\x1b\[[0-9;]*[mK]')
+                        contenido_limpio = patron_ansi.sub('', contenido)
+                        contenido_limpio = contenido_limpio.replace('¤', '').replace('[0m', '').replace('[1;32m', '')
+                        
+                        self.consola.insert("end", contenido_limpio)
+            except Exception as e:
+                self.consola.insert("end", f"[-] Incidencia al abrir el reporte escrito: {e}\n")
+        
+        self.consola.see("end")   
 
     # ==========================================
     # MENÚ DESTRUCCION

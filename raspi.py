@@ -97,6 +97,7 @@ BASE_DIR_NMAP = "Resultados_Nmap"
 BASE_DIR_WIFI = "Resultados_Handshake"
 BASE_DIR_EVIL = "Resultados_EvilTwin"
 BASE_DIR_BLE = "Resultados_BLE"
+BASE_DIR_POISON = "Resultados_Poison" 
 
 # ==========================================
 # CLASE SCROLLABLE FRAME (Táctil optimizado)
@@ -540,7 +541,7 @@ class RedTeamApp(tk.Tk):
         self.gadget_available = False
         self._gadget_initialized = False
 
-        for d in [BASE_DIR_NMAP, BASE_DIR_WIFI, BASE_DIR_EVIL, BASE_DIR_BLE]:
+        for d in [BASE_DIR_NMAP, BASE_DIR_WIFI, BASE_DIR_EVIL, BASE_DIR_BLE, BASE_DIR_POISON]:
             os.makedirs(d, exist_ok=True)
 
         self.main_frame = ttk.Frame(self, style='Dark.TFrame')
@@ -2083,144 +2084,76 @@ ln -s functions/ecm.usb0 configs/c.1/
         self.escribir_consola("[+] Aplicado. REINICIANDO el sistema en 3 segundos...")
         self.after(3000, lambda: subprocess.run("sudo reboot", shell=True))
     
+    # =========================================================================
+    # MODULO: ENVENENAMIENTO DE RED (POISON) - ESTANDARIZADO
+    # =========================================================================
+    
     def show_poison_menu(self):
-        """Limpia la pantalla principal y dibuja la interfaz ligera de Poison con los colores oficiales."""
         self.limpiar_main_frame()
-        
-        # Botón de regreso nativo adaptado al menú de inicio del grupo
-        self.agregar_boton_atras(self.show_inicio_menu) 
-        
-        # Título del Módulo usando los estilos del proyecto
-        ttk.Label(self.main_frame, text="ATAQUE POISON (LLMNR / mDNS)", style='Title.TLabel').pack(pady=5)
+        self.agregar_boton_atras(self.show_inicio_menu)
+        ttk.Label(self.main_frame, text="ATAQUE POISON (RNDIS/ECM)", style='Title.TLabel').pack(pady=2)
 
-        # Contenedor interno para organizar los elementos visuales
-        poison_frame = ttk.Frame(self.main_frame)
-        poison_frame.pack(fill='both', expand=True, padx=15, pady=5)
+        # Usamos ScrollableFrame para que tenga scroll táctil como los otros menús
+        scroll = ScrollableFrame(self.main_frame, max_items=15)
+        scroll.pack(fill='both', expand=True, padx=2, pady=2)
 
-        # 1. BOTONERA INFERIOR: Se empaqueta primero abajo para fijar su espacio real
-        btn_frame = ttk.Frame(poison_frame)
-        btn_frame.pack(fill='x', pady=5, side="bottom")
+        self.btn_ejecutar_poison = scroll.add_button(text="LANZAR ATAQUE",
+                                                     command=self.accion_boton_lanzar_poison,
+                                                     style='Red.TButton', width=28)
+                                                     
+        self.btn_detener_poison = scroll.add_button(text="DETENER ATAQUE",
+                                                    command=self.accion_boton_detener_poison,
+                                                    style='Gray.TButton', width=28)
+        self.btn_detener_poison.state(['disabled']) # Inicia desactivado
 
-        # Botón 1: Lanzar el ataque (Rojo nativo de Dragon-Fly)
-        self.btn_ejecutar_poison = tk.Button(
-            btn_frame, text="LANZAR ATAQUE", font=("Arial", 10, "bold"),
-            bg="#B71C1C", fg="white", activebackground="#880E4F",
-            command=self.accion_boton_lanzar_poison
-        )
-        self.btn_ejecutar_poison.pack(side="left", padx=5, expand=True, fill='x')
+        scroll.add_button(text="EXPLORAR LOGS",
+                          command=self._poison_explorar_logs,
+                          style='Danger.TButton', width=28)
 
-        # Botón 2: Detener el ataque (Inicia apagado en gris)
-        self.btn_detener_poison = tk.Button(
-            btn_frame, text="DETENER ATAQUE", state="disabled", font=("Arial", 10, "bold"),
-            bg="#d9d9d9", fg="black",
-            command=self.accion_boton_detener_poison
-        )
-        self.btn_detener_poison.pack(side="left", padx=5, expand=True, fill='x')
-
-        # Botón 3: Ver Logs (Amarillo/Naranja estético del sistema)
-        self.btn_ver_logs_poison = tk.Button(
-            btn_frame, text="VER LOGS CAPTURADOS", font=("Arial", 10, "bold"),
-            bg="#FF9800", fg="black", activebackground="#E65100",
-            command=self.mostrar_logs_poison
-        )
-        self.btn_ver_logs_poison.pack(side="left", padx=5, expand=True, fill='x')
-
-        # 2. CONSOLA INTEGRADA: Se empaqueta arriba y toma de forma limpia el resto del espacio central
-        # Se añaden paddings (padx/pady) para que el texto respire y no se corte en los bordes
-        self.consola = tk.Text(
-            poison_frame, bg="black", fg="#00FF00", font=("Courier", 10),
-            padx=12, pady=12, insertbackground="white"
-        )
-        self.consola.pack(pady=5, fill='both', expand=True, side="top")
-        
-        self.consola.insert("end", "[*] Módulo Poison cargado con éxito. Listo para iniciar en eth1...\n")
-        self.consola.see("end")
-        
+        # Inyecta la terminal estandarizada (que YA incluye su propia Scrollbar nativa)
+        self.mostrar_consola(parent=scroll.scrollable_frame)
+        self.escribir_consola("[*] Módulo Poison cargado. Listo para iniciar en usb0...")
         import gc
         gc.collect()
 
-    def iniciar_ataque_poison_hilo(self):
+    def accion_boton_lanzar_poison(self):
+        import threading
+        
+        # Intercambio de estilos y estados visuales (Tkinter nativo)
+        self.btn_ejecutar_poison.config(style='Gray.TButton')
+        self.btn_ejecutar_poison.state(['disabled'])
+        self.btn_detener_poison.config(style='Red.TButton')
+        self.btn_detener_poison.state(['!disabled'])
+
+        # Generar nombre de la sesión idéntico a Nmap
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        session_dir = os.path.abspath(os.path.join(BASE_DIR_POISON, f"Auditoria-{timestamp}"))
+        
         import network_modules.poison_logic as poison_logic
         
-        # Intercambio de colores UI
-        self.btn_ejecutar_poison.config(state="disabled", bg="#d9d9d9", fg="black")
-        self.btn_detener_poison.config(state="normal", bg="#B71C1C", fg="white", activebackground="#880E4F")
-
-        # Función puente segura para Tkinter
-        def actualizar_consola_safe(texto):
-            self.after(0, lambda: self._insertar_texto_poison(texto))
-
-        # IMPORTANTE: El gadget de red USB en la Raspberry Zero siempre crea la interfaz "usb0", no "eth1"
-        hilo = threading.Thread(target=poison_logic.iniciar_ataque_red, args=("usb0", actualizar_consola_safe))
+        # Le pasamos self.escribir_consola (que ya es Thread-Safe) y el directorio de la sesión
+        hilo = threading.Thread(target=poison_logic.iniciar_ataque_red, 
+                                args=("usb0", self.escribir_consola, session_dir))
         hilo.daemon = True
         hilo.start()
 
-    def _insertar_texto_poison(self, texto):
-        if hasattr(self, 'consola'):
-            self.consola.config(state='normal')
-            self.consola.insert("end", texto)
-            self.consola.see("end")
-
     def accion_boton_detener_poison(self):
-        self._insertar_texto_poison("\n[!] Deteniendo servicios y guardando logs...\n")
+        self.escribir_consola("\n[!] Deteniendo servicios y guardando logs...")
         
         import subprocess
-        # Al matar Responder, poison_logic.py detectará el fin y limpiará las rutas automáticamente
         subprocess.run(["sudo", "pkill", "-f", "responder"], stderr=subprocess.DEVNULL)
         subprocess.run(["sudo", "pkill", "-f", "dnsmasq"], stderr=subprocess.DEVNULL)
         
         # Restaurar UI
-        self.btn_ejecutar_poison.config(state="normal", bg="#B71C1C", fg="white")
-        self.btn_detener_poison.config(state="disabled", bg="#d9d9d9", fg="black")
+        self.btn_ejecutar_poison.config(style='Red.TButton')
+        self.btn_ejecutar_poison.state(['!disabled'])
+        self.btn_detener_poison.config(style='Gray.TButton')
+        self.btn_detener_poison.state(['disabled'])
 
-    def accion_boton_lanzar_poison(self):
-        """Punto de entrada seguro mediante hilos para el lanzamiento."""
-        import threading
-        hilo = threading.Thread(target=self.iniciar_ataque_poison_hilo)
-        hilo.daemon = True
-        hilo.start()
-        
-
-    def mostrar_logs_poison(self):
-        """Busca y proyecta los reportes de auditoría capturados limpiando las secuencias ANSI."""
-        import os
-        ruta_proyecto = os.path.dirname(os.path.abspath(__file__))
-        ruta_logs_local = os.path.join(ruta_proyecto, "logs")
-        
-        self.consola.delete("1.0", "end") 
-        self.consola.insert("end", "[*] Analizando repositorio de registros locales...\n")
-        
-        if not os.path.exists(ruta_logs_local) or not os.listdir(ruta_logs_local):
-            self.consola.insert("end", "[!] No se han encontrado capturas de credenciales o hashes guardados aún.\n")
-            self.consola.see("end")
-            return
-
-        archivos = [os.path.join(ruta_logs_local, f) for f in os.listdir(ruta_logs_local) if os.path.isfile(os.path.join(ruta_logs_local, f))]
-        
-        if archivos:
-            archivo_reciente = max(archivos, key=os.path.getmtime)
-            nombre_corto = os.path.basename(archivo_reciente)
-            
-            self.consola.insert("end", f"[OK] Desplegando reporte de auditoría: {nombre_corto}\n")
-            self.consola.insert("end", "=====================================================================\n\n")
-            
-            try:
-                import re
-                with open(archivo_reciente, "r", encoding="utf-8", errors="ignore") as f:
-                    contenido = f.read()
-                    if contenido.strip() == "":
-                        self.consola.insert("end", "(El archivo está vacío. No se interceptaron solicitudes de red en esta sesión)")
-                    else:
-                        # Filtrado regex para remover códigos ANSI de consola de forma nativa
-                        patron_ansi = re.compile(r'\x1b\[[0-9;]*[mK]')
-                        contenido_limpio = patron_ansi.sub('', contenido)
-                        contenido_limpio = contenido_limpio.replace('¤', '').replace('[0m', '').replace('[1;32m', '')
-                        
-                        self.consola.insert("end", contenido_limpio)
-            except Exception as e:
-                self.consola.insert("end", f"[-] Incidencia al abrir el reporte escrito: {e}\n")
-        
-        self.consola.see("end")   
+    def _poison_explorar_logs(self):
+        # Magia negra: Reutilizamos el explorador de archivos que ya usas para Nmap/WiFi
+        # Creará el menú de navegación de carpetas de forma automática.
+        self._mostrar_explorador_generico(BASE_DIR_POISON, "LOGS POISON", self.show_poison_menu) 
 
     # ==========================================
     # MENÚ DESTRUCCION

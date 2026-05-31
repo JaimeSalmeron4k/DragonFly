@@ -2121,8 +2121,12 @@ ln -s functions/ecm.usb0 configs/c.1/
         self.escribir_consola("\n[!] Deteniendo servicios y guardando logs...")
         
         import subprocess
-        subprocess.run(["sudo", "pkill", "-f", "responder"], stderr=subprocess.DEVNULL)
-        subprocess.run(["sudo", "pkill", "-f", "dnsmasq"], stderr=subprocess.DEVNULL)
+        # Añadido shell=True y los comandos fuser para asegurar que no queden 
+        # subprocesos huérfanos que mantengan la tubería (pipe) bloqueada.
+        subprocess.run("sudo pkill -f responder", shell=True, stderr=subprocess.DEVNULL)
+        subprocess.run("sudo pkill -f dnsmasq", shell=True, stderr=subprocess.DEVNULL)
+        subprocess.run("sudo fuser -k 53/udp", shell=True, stderr=subprocess.DEVNULL)
+        subprocess.run("sudo fuser -k 67/udp", shell=True, stderr=subprocess.DEVNULL)
         
         # Restaurar UI
         self.btn_ejecutar_poison.config(style='Red.TButton')

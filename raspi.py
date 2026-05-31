@@ -533,6 +533,9 @@ class RedTeamApp(tk.Tk):
         self.evil_twin_stop = False
         self.deauth_proc = None
 
+        self.poison_attack_instance = None  # guardará la instancia de PoisonAttack
+        self.poison_thread = None
+
         self.console_buffer = []
         self.console_pending = False
         self._console_after_id = None
@@ -2117,39 +2120,53 @@ ln -s functions/ecm.usb0 configs/c.1/
         gc.collect()
 
 
+    def accion_boton_lanzar_poison(self):
+        import threading
+        from datetime import datetime
+        import network_modules.poison_logic as poison_logic
+
+        # Intercambio de botones
+        self.btn_ejecutar_poison.config(style='Gray.TButton')
+        self.btn_ejecutar_poison.state(['disabled'])
+        self.btn_detener_poison.config(style='Red.TButton')
+        self.btn_detener_poison.state(['!disabled'])
+
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        session_dir = os.path.abspath(os.path.join(BASE_DIR_POISON, f"Auditoria-{timestamp}"))
+
+        # Crear instancia del ataque (detecta la interfaz USB automáticamente)
+        self.poison_attack_instance = poison_logic.PoisonAttack(
+            interface=None,                     # detección automática
+            callback_consola=self.escribir_consola,
+            session_dir=session_dir
+        )
+
+        # Lanzar en hilo
+        self.poison_thread = threading.Thread(
+            target=self.poison_attack_instance.start,
+            daemon=True
+        )
+        self.poison_thread.start()
+
     def accion_boton_detener_poison(self):
-        self.escribir_consola("\n[!] Deteniendo servicios y guardando logs...")
-        
-        import subprocess
-        subprocess.run(["sudo", "pkill", "-f", "responder"], stderr=subprocess.DEVNULL)
-        subprocess.run(["sudo", "pkill", "-f", "dnsmasq"], stderr=subprocess.DEVNULL)
-        
+        """Detiene limpiamente el ataque Poison y fuerza el guardado de logs."""
+        self.escribir_consola("\n[!] Deteniendo ataque...")
+        if self.poison_attack_instance:
+            self.poison_attack_instance.stop()   # señal + terminación de procesos
+            # El hilo saldrá del bucle y ejecutará el finally (cleanup)
+            # Podemos opcionalmente esperar un poco para que termine:
+            if self.poison_thread and self.poison_thread.is_alive():
+                self.poison_thread.join(timeout=5)
+            self.poison_attack_instance = None
+            self.poison_thread = None
+
         # Restaurar UI
         self.btn_ejecutar_poison.config(style='Red.TButton')
         self.btn_ejecutar_poison.state(['!disabled'])
         self.btn_detener_poison.config(style='Gray.TButton')
         self.btn_detener_poison.state(['disabled'])
 
-    def accion_boton_lanzar_poison(self):
-        import threading
-        
-        # Intercambio de estilos y estados visuales (Tkinter nativo)
-        self.btn_ejecutar_poison.config(style='Gray.TButton')
-        self.btn_ejecutar_poison.state(['disabled'])
-        self.btn_detener_poison.config(style='Red.TButton')
-        self.btn_detener_poison.state(['!disabled'])
-
-        # Generar nombre de la sesión idéntico a Nmap
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        session_dir = os.path.abspath(os.path.join(BASE_DIR_POISON, f"Auditoria-{timestamp}"))
-        
-        import network_modules.poison_logic as poison_logic
-        
-        # Le pasamos self.escribir_consola (que ya es Thread-Safe) y el directorio de la sesión
-        hilo = threading.Thread(target=poison_logic.iniciar_ataque_red, 
-                                args=("usb0", self.escribir_consola, session_dir))
-        hilo.daemon = True
-        hilo.start()
+    
         
 
     def _poison_explorar_logs(self):

@@ -2047,6 +2047,9 @@ ln -s functions/hid.usb0 configs/c.1/
             elif modo == "rndis":
                 sh_script += """
 mkdir -p functions/rndis.usb0
+# MAC estática para evitar que el PC víctima desconecte el USB
+echo "42:63:65:12:34:56" > functions/rndis.usb0/host_addr
+echo "42:63:65:12:34:57" > functions/rndis.usb0/dev_addr
 echo 1 > os_desc/use
 echo 0xcd > os_desc/b_vendor_code
 echo MSFT100 > os_desc/qw_sign
@@ -2060,6 +2063,9 @@ ln -s configs/c.1 os_desc
             elif modo == "ecm":
                 sh_script += """
 mkdir -p functions/ecm.usb0
+# MAC estática obligatoria para estabilidad en Linux/Mac
+echo "42:63:65:12:34:56" > functions/ecm.usb0/host_addr
+echo "42:63:65:12:34:57" > functions/ecm.usb0/dev_addr
 ln -s functions/ecm.usb0 configs/c.1/
 """
 

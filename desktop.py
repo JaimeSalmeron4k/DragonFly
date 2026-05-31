@@ -103,20 +103,22 @@ class RedTeamApp(ctk.CTk):
         # Sidebar
         self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=15, fg_color=COLOR_FONDO_SIDEBAR)
         self.sidebar_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(8, weight=1)
+        self.sidebar_frame.grid_rowconfigure(9, weight=1)
 
         self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="DRAGON FLY\nSYSTEM", 
                                      font=ctk.CTkFont(size=22, weight="bold"), text_color="#ff4d4d")
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 15))
 
         # Botones del menú principal
+
         self.btn_inicio = self.crear_boton_menu("0. Inicio", self.show_inicio_menu, 1)
         self.btn_nmap = self.crear_boton_menu("1. Reconocimiento", self.show_recon_menu, 2)
         self.btn_mac = self.crear_boton_menu("2. MAC Changer", self.show_mac_menu, 3)
         self.btn_wifi = self.crear_boton_menu("3. Auditoría WiFi", self.show_wifi_menu, 4)
         self.btn_bluetooth = self.crear_boton_menu("4. Bluetooth BLE", self.show_bluetooth_menu, 5)
-        self.btn_ducky = self.crear_boton_menu("5. Rubber Ducky", self.show_ducky_menu, 6)
-        self.btn_utils = self.crear_boton_menu("6. Utilidades OS", self.show_utils_menu, 7)
+        self.btn_rubber = self.crear_boton_menu("5. Rubber Ducky", self.show_ducky_menu, 6)
+        self.btn_poison = self.crear_boton_menu("7. PoisonTap", self.show_poison_menu, 7)
+        self.btn_utils = self.crear_boton_menu("8. Utilidades OS", self.show_utils_menu, 8)
 
         # Frame principal (scrollable)
         self.main_frame = ctk.CTkScrollableFrame(self, corner_radius=15, fg_color=COLOR_FONDO_PRINCIPAL)
@@ -1481,6 +1483,163 @@ no-resolv
             except Exception as e:
                 self.escribir_consola(f"[!] Error: {e}")
         threading.Thread(target=run, daemon=True).start()
+
+
+    # ==========================================
+    # MENÚ POISON TAP
+    # ==========================================
+
+    def show_poison_menu(self):
+        """Menú para lanzar el ataque PoisonTap con monitor integrado y visor de logs."""
+        self.limpiar_main_frame()
+        
+        # 1. TÍTULO Y DESCRIPCIÓN
+        ctk.CTkLabel(self.main_frame, text="ATAQUE DE RED POISONTAP", 
+                     font=ctk.CTkFont(size=24, weight="bold"), text_color="#ff4d4d").pack(pady=(40, 10))
+
+        ctk.CTkLabel(self.main_frame, text="Este módulo emula un adaptador Ethernet para\nsecuestrar el tráfico y capturar credenciales.",
+                     font=ctk.CTkFont(size=14), text_color="#cccccc").pack(pady=10)
+
+        ctk.CTkFrame(self.main_frame, height=2, fg_color="#ff4d4d").pack(fill="x", padx=50, pady=20)
+
+        # 2. CONTENEDOR DE BOTONES
+        botones_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        botones_frame.pack(pady=10)
+
+        # Aquí es donde se pega el bloque de los botones con los nuevos colores:
+
+        # Botón Lanzar
+        self.btn_ejecutar_ataque = ctk.CTkButton(
+            botones_frame, text="LANZAR ATAQUE", command=self.lanzar_ataque_hilo, 
+            fg_color="#990000", hover_color="#660000", font=ctk.CTkFont(size=15, weight="bold"),
+            height=45, width=150
+        )
+        self.btn_ejecutar_ataque.pack(side="left", padx=10)
+
+        # Botón Detener (Arranca desactivado en gris)
+        self.btn_detener_ataque = ctk.CTkButton(
+            botones_frame, text="DETENER ATAQUE", command=self.detener_ataque, 
+            fg_color="#444444", hover_color="#222222", font=ctk.CTkFont(size=15, weight="bold"),
+            height=45, width=150, state="disabled"
+        )
+        self.btn_detener_ataque.pack(side="left", padx=10)
+
+        # Botón Ver Logs (Color Amarillo/Naranja con Letras Blancas)
+        self.btn_ver_logs = ctk.CTkButton(
+            botones_frame, text="VER LOGS", command=self.abrir_visor_logs, 
+            fg_color="#ff9900", hover_color="#cc7a00", font=ctk.CTkFont(size=15, weight="bold"),
+            text_color="#ffffff", # <-- Cambiado a letras blancas
+            height=45, width=150
+        )
+        self.btn_ver_logs.pack(side="left", padx=10)
+
+        # 3. CONSOLA DE MONITOREO
+        self.consola = ctk.CTkTextbox(self.main_frame, width=650, height=250, fg_color="#000000", 
+                                      text_color="#00ff00", font=ctk.CTkFont(family="Courier", size=12))
+        self.consola.pack(pady=20, padx=20)
+        self.consola.insert("0.0", "[>] Dragon Fly: Sistema listo en eth1. Esperando ejecución...\n")
+
+    def lanzar_ataque_hilo(self):
+        """Ejecuta la lógica de ataque y cambia los colores de los botones."""
+        self.btn_ejecutar_ataque.configure(state="disabled", text="ATAQUE EN CURSO...", fg_color="#2b2b2b")
+        
+        # El botón detener se activa usando el rojo oscuro idéntico
+        self.btn_detener_ataque.configure(state="normal", fg_color="#990000", hover_color="#660000")
+        
+        self.consola.insert("end", "[!] Motor Dragon-Fly activo...\n")
+        self.consola.see("end")
+        
+        threading.Thread(target=self.ejecutar_logica_ataque, daemon=True).start()
+
+    def ejecutar_logica_ataque(self):
+        try:
+            import network_modules.poison_logic as poison_logic
+            poison_logic.iniciar_ataque_red(
+                "eth1", 
+                callback_consola=lambda texto: self.after(
+                    0, lambda: [self.consola.insert("end", texto), self.consola.see("end")]
+                )
+            )
+        except Exception as e:
+            self.after(0, lambda: self.consola.insert("end", f"\n[ERROR CRÍTICO]: {e}\n"))
+        finally:
+            self.after(0, lambda: self.btn_ejecutar_ataque.configure(
+                state="normal", 
+                text="LANZAR ATAQUE", 
+                fg_color="#990000"
+            ))
+
+    def detener_ataque(self):
+        """Mata los procesos de red y mueve los logs capturados al proyecto."""
+        self.consola.insert("end", "\n[!] Deteniendo servicios de red...\n")
+        
+        # [FIX 4] Además de responder, tumbamos dnsmasq explícitamente desde la GUI
+        os.system("sudo pkill -f responder")
+        os.system("sudo pkill -f dnsmasq")
+        os.system("sudo fuser -k 80/tcp 2>/dev/null")
+        os.system("sudo fuser -k 445/tcp 2>/dev/null")
+        
+        ruta_proyecto = os.path.dirname(os.path.abspath(__file__))
+        ruta_logs_local = os.path.join(ruta_proyecto, "logs")
+        
+        self.consola.insert("end", "[*] Sincronizando reportes de credenciales...\n")
+        os.system(f"sudo mv /usr/share/responder/logs/* {ruta_logs_local}/ 2>/dev/null")
+        
+        self.consola.insert("end", "[OK] Procesos detenidos y logs guardados en el proyecto.\n")
+        
+        self.btn_ejecutar_ataque.configure(state="normal", text="LANZAR ATAQUE", fg_color="#990000")
+        self.btn_detener_ataque.configure(state="disabled", fg_color="#444444")
+
+    def abrir_visor_logs(self):
+        """Función auxiliar para el botón de logs."""
+        if hasattr(self, 'consola'):
+            self.consola.insert("end", "[*] Mostrando reportes locales activos...\n")
+            self.consola.see("end")
+
+    def abrir_visor_logs(self):
+        """Lee los archivos de texto de la carpeta logs local y los muestra en la consola."""
+        if not hasattr(self, 'consola'):
+            return
+
+        ruta_proyecto = os.path.dirname(os.path.abspath(__file__))
+        ruta_logs = os.path.join(ruta_proyecto, "logs")
+        
+        self.consola.insert("end", "\n[*] Buscando reportes de hashes locales...\n")
+        self.consola.see("end")
+
+        if not os.path.exists(ruta_logs) or not os.listdir(ruta_logs):
+            self.consola.insert("end", "[!] No se encontraron archivos de logs en la carpeta del proyecto.\n")
+            self.consola.see("end")
+            return
+
+        # Buscamos todos los archivos .txt o .log en la carpeta
+        archivos = [os.path.join(ruta_logs, f) for f in os.listdir(ruta_logs) if f.endswith(('.txt', '.log'))]
+
+        if not archivos:
+            self.consola.insert("end", "[!] Carpeta localizada, pero no hay archivos de texto (.txt/.log) todavía.\n")
+            self.consola.see("end")
+            return
+
+        # Ordenamos para abrir el archivo modificado más recientemente
+        archivo_reciente = max(archivos, key=os.path.getmtime)
+        nombre_archivo = os.path.basename(archivo_reciente)
+
+        self.consola.insert("end", f"[+] Mostrando contenido de: {nombre_archivo}\n")
+        self.consola.insert("end", "="*50 + "\n")
+        
+        try:
+            with open(archivo_reciente, "r", encoding="utf-8", errors="ignore") as f:
+                contenido = f.read()
+                if contenido.strip():
+                    self.consola.insert("end", contenido)
+                else:
+                    self.consola.insert("end", "[vacio] El archivo de log está registrado pero no contiene texto aún.\n")
+        except Exception as e:
+            self.consola.insert("end", f"[ERROR] No se pudo leer el archivo: {e}\n")
+            
+        self.consola.insert("end", "\n" + "="*50 + "\n")
+        self.consola.see("end")
+
 
     # ==========================================
     # MENÚ UTILIDADES 

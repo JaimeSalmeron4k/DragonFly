@@ -2116,27 +2116,6 @@ ln -s functions/ecm.usb0 configs/c.1/
         import gc
         gc.collect()
 
-    def iniciar_ataque_poison_hilo(self):
-        import network_modules.poison_logic as poison_logic
-        
-        # Intercambio de colores UI
-        self.btn_ejecutar_poison.config(state="disabled", bg="#d9d9d9", fg="black")
-        self.btn_detener_poison.config(state="normal", bg="#B71C1C", fg="white", activebackground="#880E4F")
-
-        # Función puente segura para Tkinter
-        def actualizar_consola_safe(texto):
-            self.after(0, lambda: self._insertar_texto_poison(texto))
-
-        # IMPORTANTE: El gadget de red USB en la Raspberry Zero siempre crea la interfaz "usb0", no "eth1"
-        hilo = threading.Thread(target=poison_logic.iniciar_ataque_red, args=("usb0", actualizar_consola_safe))
-        hilo.daemon = True
-        hilo.start()
-
-    def _insertar_texto_poison(self, texto):
-        if hasattr(self, 'consola'):
-            self.consola.config(state='normal')
-            self.consola.insert("end", texto)
-            self.consola.see("end")
 
     def accion_boton_detener_poison(self):
         self.escribir_consola("\n[!] Deteniendo servicios y guardando logs...")
@@ -2177,7 +2156,7 @@ ln -s functions/ecm.usb0 configs/c.1/
         # Magia negra: Reutilizamos el explorador de archivos que ya usas para Nmap/WiFi
         # Creará el menú de navegación de carpetas de forma automática.
         self._mostrar_explorador_generico(BASE_DIR_POISON, "LOGS POISON", self.show_poison_menu)
-        
+
     # ==========================================
     # MENÚ DESTRUCCION
     # ==========================================
@@ -2556,34 +2535,27 @@ ln -s functions/ecm.usb0 configs/c.1/
     def _utils_bluetooth_conectar(self, iface, mac, nombre):
         self.limpiar_main_frame()
         self.agregar_boton_atras(lambda: self._utils_bluetooth_escanear(iface))
-        ttk.Label(self.main_frame, text="CONECTANDO...", style='Title.TLabel').pack(pady=5)
+        ttk.Label(self.main_frame, text=f"CONECTANDO BT:\n{nombre[:15]}", style='Title.TLabel', justify='center').pack(pady=5)
         self.mostrar_consola()
 
         def conectar():
             try:
-                # 1. BORRAR PERFIL PREVIO CORRUPTO: 
-                # Esto evita el bug "key-mgmt: property is missing" limpiando la caché de esa red.
-                subprocess.run(["nmcli", "connection", "delete", ssid], capture_output=True)
-                time.sleep(1) # Pequeña pausa para asegurar que NM elimine el perfil
+                self.escribir_consola(f"[*] Emparejando con {mac}...")
+                subprocess.run(f"sudo bluetoothctl -- pair {mac}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(2)
                 
-                # 2. CONECTAR DE FORMA SEGURA:
-                # Usamos una lista y quitamos shell=True para evitar inyección de comandos 
-                # o errores con contraseñas que tengan caracteres especiales (!, $, ', ").
-                if password:
-                    cmd = ["nmcli", "device", "wifi", "connect", ssid, "password", password, "ifname", iface]
+                self.escribir_consola(f"[*] Conectando...")
+                result = subprocess.run(f"sudo bluetoothctl -- connect {mac}", shell=True, capture_output=True, text=True)
+                
+                if "Connection successful" in result.stdout or result.returncode == 0:
+                    estado = "ÉXITO: Dispositivo BT vinculado."
                 else:
-                    cmd = ["nmcli", "device", "wifi", "connect", ssid, "ifname", iface]
-                
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                
-                if result.returncode == 0:
-                    state_out = subprocess.check_output(["nmcli", "-t", "-f", "GENERAL.STATE", "dev", "show", iface], text=True)
-                    estado = "ÉXITO" if "100 (connected)" in state_out else "ADVERTENCIA"
-                else:
-                    estado = f"ERROR: {result.stderr.strip()}"
+                    estado = f"ERROR: {result.stderr.strip() or result.stdout.strip()}"
             except Exception as e:
                 estado = f"EXCEPCIÓN: {e}"
-            self.after(0, lambda: self._utils_wifi_mostrar_resultado(estado, iface))
+            
+            # Llamamos a la función correcta de mostrar resultados BT
+            self.after(0, lambda: self._utils_bt_mostrar_resultado(estado))
 
         threading.Thread(target=conectar, daemon=True).start()
 

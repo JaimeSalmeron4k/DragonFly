@@ -1963,7 +1963,6 @@ if __name__ == "__main__":
         gadget_script = "/usr/local/bin/usb_gadget.sh"
         service_path = "/etc/systemd/system/usb_gadget.service"
 
-
         # 1. Crear el servicio systemd si no existe
         if not os.path.exists(service_path):
             self.escribir_consola("[*] Creando servicio systemd para el gadget...")
@@ -1982,19 +1981,17 @@ WantedBy=sysinit.target
             subprocess.run(f"sudo sh -c 'echo \"{servicio_systemd}\" > {service_path}'", shell=True)
             subprocess.run("sudo systemctl daemon-reload", shell=True)
 
+        # 2. Limpiar configuración dwc2
+        subprocess.run(f"sudo sed -i '/dtoverlay=dwc2/d' {cfg}", shell=True)
 
-        subprocess.run(f'sudo sed -i "/^dtoverlay=dwc2/d" {cfg}', shell=True)
-        
         if modo == "host":
-            subprocess.run(f'sudo sh -c \'echo "dtoverlay=dwc2,dr_mode=host" >> {cfg}\'', shell=True)
-            subprocess.run("sudo systemctl disable usb_gadget.service 2>/dev/null", shell=True)
-            self.log("[*] Controlador configurado como Host puro.")
+            subprocess.run(f"sudo sh -c 'echo \"dtoverlay=dwc2,dr_mode=host\" >> {cfg}'", shell=True)
+            subprocess.run("sudo systemctl disable usb_gadget.service", shell=True, stderr=subprocess.DEVNULL)
+            self.escribir_consola("[*] Controlador configurado como Host puro (Antena/Teclado externo).")
         else:
-            subprocess.run(f'sudo sh -c \'echo "dtoverlay=dwc2,dr_mode=peripheral" >> {cfg}\'', shell=True)
-            subprocess.run("sudo systemctl enable usb_gadget.service 2>/dev/null", shell=True)
-
-
-
+            subprocess.run(f"sudo sh -c 'echo \"dtoverlay=dwc2,dr_mode=peripheral\" >> {cfg}'", shell=True)
+            subprocess.run("sudo systemctl enable usb_gadget.service", shell=True, stderr=subprocess.DEVNULL)
+            
             # --- GENERADOR DINÁMICO DE LIBCOMPOSITE ---
             # Este script borra la configuración previa en memoria RAM (configfs) y monta la nueva
             sh_script = f"""#!/bin/bash
@@ -2054,9 +2051,6 @@ ln -s functions/hid.usb0 configs/c.1/
             elif modo == "rndis":
                 sh_script += """
 mkdir -p functions/rndis.usb0
-# MAC estática para evitar que el PC víctima desconecte el USB
-echo "42:63:65:12:34:56" > functions/rndis.usb0/host_addr
-echo "42:63:65:12:34:57" > functions/rndis.usb0/dev_addr
 echo 1 > os_desc/use
 echo 0xcd > os_desc/b_vendor_code
 echo MSFT100 > os_desc/qw_sign
@@ -2070,9 +2064,6 @@ ln -s configs/c.1 os_desc
             elif modo == "ecm":
                 sh_script += """
 mkdir -p functions/ecm.usb0
-# MAC estática obligatoria para estabilidad en Linux/Mac
-echo "42:63:65:12:34:56" > functions/ecm.usb0/host_addr
-echo "42:63:65:12:34:57" > functions/ecm.usb0/dev_addr
 ln -s functions/ecm.usb0 configs/c.1/
 """
 

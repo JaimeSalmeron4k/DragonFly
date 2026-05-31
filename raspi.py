@@ -795,6 +795,7 @@ class RedTeamApp(tk.Tk):
             ("Auditoría WiFi", self.show_wifi_menu, "icons/wifi.png"),
             ("NRF24 Jammer", self.show_nrf_jammer_menu, "icons/jammer.png"),
             ("Rubber Ducky", self.show_ducky_menu, "icons/ducky.png"),
+            ("PoisonTap", self.show_poison_menu, "icons/poison.png"),
             ("Utilidades OS", self.show_utils_menu, "icons/utils.png"),
             ("Autodestrucción", self.show_self_destruct_menu, "icons/destroy.png")
         ]
@@ -2001,6 +2002,176 @@ WantedBy=sysinit.target
 
         self.escribir_consola("[+] Aplicado. Apagando en 3 segundos...")
         self.after(3000, lambda: subprocess.run("sudo poweroff", shell=True))
+
+    # =========================================================================
+    # MODULO: ENVENENAMIENTO DE RED (POISON) - INTERFACING UNIFICADO COMPLETO
+    # =========================================================================
+    
+    def show_poison_menu(self):
+        """Limpia la pantalla principal y dibuja la interfaz ligera de Poison con los colores oficiales."""
+        self.limpiar_main_frame()
+        
+        # Botón de regreso nativo adaptado al menú de inicio del grupo
+        self.agregar_boton_atras(self.show_inicio_menu) 
+        
+        # Título del Módulo usando los estilos del proyecto
+        ttk.Label(self.main_frame, text="ATAQUE POISON (LLMNR / mDNS)", style='Title.TLabel').pack(pady=5)
+
+        # Contenedor interno para organizar los elementos visuales
+        poison_frame = ttk.Frame(self.main_frame)
+        poison_frame.pack(fill='both', expand=True, padx=15, pady=5)
+
+        # 1. BOTONERA INFERIOR: Se empaqueta primero abajo para fijar su espacio real
+        btn_frame = ttk.Frame(poison_frame)
+        btn_frame.pack(fill='x', pady=5, side="bottom")
+
+        # Botón 1: Lanzar el ataque (Rojo nativo de Dragon-Fly)
+        self.btn_ejecutar_poison = tk.Button(
+            btn_frame, text="LANZAR ATAQUE", font=("Arial", 10, "bold"),
+            bg="#B71C1C", fg="white", activebackground="#880E4F",
+            command=self.accion_boton_lanzar_poison
+        )
+        self.btn_ejecutar_poison.pack(side="left", padx=5, expand=True, fill='x')
+
+        # Botón 2: Detener el ataque (Inicia apagado en gris)
+        self.btn_detener_poison = tk.Button(
+            btn_frame, text="DETENER ATAQUE", state="disabled", font=("Arial", 10, "bold"),
+            bg="#d9d9d9", fg="black",
+            command=self.accion_boton_detener_poison
+        )
+        self.btn_detener_poison.pack(side="left", padx=5, expand=True, fill='x')
+
+        # Botón 3: Ver Logs (Amarillo/Naranja estético del sistema)
+        self.btn_ver_logs_poison = tk.Button(
+            btn_frame, text="VER LOGS CAPTURADOS", font=("Arial", 10, "bold"),
+            bg="#FF9800", fg="black", activebackground="#E65100",
+            command=self.mostrar_logs_poison
+        )
+        self.btn_ver_logs_poison.pack(side="left", padx=5, expand=True, fill='x')
+
+        # 2. CONSOLA INTEGRADA: Se empaqueta arriba y toma de forma limpia el resto del espacio central
+        # Se añaden paddings (padx/pady) para que el texto respire y no se corte en los bordes
+        self.consola = tk.Text(
+            poison_frame, bg="black", fg="#00FF00", font=("Courier", 10),
+            padx=12, pady=12, insertbackground="white"
+        )
+        self.consola.pack(pady=5, fill='both', expand=True, side="top")
+        
+        self.consola.insert("end", "[*] Módulo Poison cargado con éxito. Listo para iniciar en eth1...\n")
+        self.consola.see("end")
+        
+        import gc
+        gc.collect()
+
+    def levantar_red_poison(self):
+        """Configura la interfaz eth1 y los servicios de red para el ataque."""
+        try:
+            self.consola.insert("end", "\n[*] Configurando interfaz para Poison: eth1\n")
+            self.consola.see("end")
+            
+            import subprocess
+            subprocess.run(["sudo", "ip", "link", "set", "dev", "eth1", "up"], check=True)
+            subprocess.run(["sudo", "ip", "addr", "add", "1.0.0.1/8", "dev", "eth1"], check=True)
+            subprocess.run(["sudo", "ip", "addr", "add", "fe80::1/64", "dev", "eth1", "scope", "link"], check=True)
+            subprocess.run(["sudo", "systemctl", "start", "dnsmasq"], check=True)
+            return True
+        except Exception as e:
+            self.consola.insert("end", f"[AVISO] Falló configuración física de red: {e}\n")
+            self.consola.insert("end", "[!] Activando simulación visual en consola.\n")
+            self.consola.see("end")
+            return True 
+
+    def detener_red_poison(self):
+        """Limpia los servicios de envenenamiento y restaura la interfaz eth1."""
+        self.consola.insert("end", "\n[!] Deteniendo servicios Poison y recopilando evidencia...\n")
+        self.consola.see("end")
+        
+        import subprocess
+        import os
+        
+        subprocess.run(["sudo", "pkill", "-f", "responder"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "fuser", "-k", "80/tcp"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "fuser", "-k", "445/tcp"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "systemctl", "stop", "dnsmasq"], stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "ip", "addr", "flush", "dev", "eth1"], stderr=subprocess.DEVNULL)
+        
+        ruta_proyecto = os.path.dirname(os.path.abspath(__file__))
+        ruta_logs_local = os.path.join(ruta_proyecto, "logs")
+        os.makedirs(ruta_logs_local, exist_ok=True)
+        os.system(f"sudo mv /usr/share/responder/logs/* {ruta_logs_local}/ 2>/dev/null")
+        
+        self.consola.insert("end", "[OK] Red restaurada de manera segura. Evidencia guardada en /logs.\n")
+        self.consola.see("end")
+
+    def iniciar_ataque_poison_hilo(self):
+        """Maneja la ejecución asíncrona intercambiando los colores de los botones de forma segura."""
+        if self.levantar_red_poison():
+            self.consola.insert("end", "[+] INTERFAZ ACTIVA: eth1\n")
+            self.consola.insert("end", "[*] Ejecutando suite de envenenamiento en segundo plano...\n")
+            self.consola.see("end")
+            
+            # INTERCAMBIO DE COLORES: Lanzar se apaga a gris; Detener se enciende en Rojo
+            self.btn_ejecutar_poison.config(state="disabled", bg="#d9d9d9", fg="black")
+            self.btn_detener_poison.config(state="normal", bg="#B71C1C", fg="white", activebackground="#880E4F")
+
+    def accion_boton_lanzar_poison(self):
+        """Punto de entrada seguro mediante hilos para el lanzamiento."""
+        import threading
+        hilo = threading.Thread(target=self.iniciar_ataque_poison_hilo)
+        hilo.daemon = True
+        hilo.start()
+        
+    def accion_boton_detener_poison(self):
+        """Detiene el ataque de red y reestablece los controles gráficos originales."""
+        self.detener_red_poison()
+        
+        # RESTAURACIÓN: Lanzar vuelve a su Rojo original; Detener se apaga a gris
+        self.btn_ejecutar_poison.config(state="normal", bg="#B71C1C", fg="white")
+        
+        import os
+        color_gris = "SystemButtonFace" if os.name == "nt" else "#d9d9d9"
+        self.btn_detener_poison.config(state="disabled", bg=color_gris, fg="black")
+
+    def mostrar_logs_poison(self):
+        """Busca y proyecta los reportes de auditoría capturados limpiando las secuencias ANSI."""
+        import os
+        ruta_proyecto = os.path.dirname(os.path.abspath(__file__))
+        ruta_logs_local = os.path.join(ruta_proyecto, "logs")
+        
+        self.consola.delete("1.0", "end") 
+        self.consola.insert("end", "[*] Analizando repositorio de registros locales...\n")
+        
+        if not os.path.exists(ruta_logs_local) or not os.listdir(ruta_logs_local):
+            self.consola.insert("end", "[!] No se han encontrado capturas de credenciales o hashes guardados aún.\n")
+            self.consola.see("end")
+            return
+
+        archivos = [os.path.join(ruta_logs_local, f) for f in os.listdir(ruta_logs_local) if os.path.isfile(os.path.join(ruta_logs_local, f))]
+        
+        if archivos:
+            archivo_reciente = max(archivos, key=os.path.getmtime)
+            nombre_corto = os.path.basename(archivo_reciente)
+            
+            self.consola.insert("end", f"[OK] Desplegando reporte de auditoría: {nombre_corto}\n")
+            self.consola.insert("end", "=====================================================================\n\n")
+            
+            try:
+                import re
+                with open(archivo_reciente, "r", encoding="utf-8", errors="ignore") as f:
+                    contenido = f.read()
+                    if contenido.strip() == "":
+                        self.consola.insert("end", "(El archivo está vacío. No se interceptaron solicitudes de red en esta sesión)")
+                    else:
+                        # Filtrado regex para remover códigos ANSI de consola de forma nativa
+                        patron_ansi = re.compile(r'\x1b\[[0-9;]*[mK]')
+                        contenido_limpio = patron_ansi.sub('', contenido)
+                        contenido_limpio = contenido_limpio.replace('¤', '').replace('[0m', '').replace('[1;32m', '')
+                        
+                        self.consola.insert("end", contenido_limpio)
+            except Exception as e:
+                self.consola.insert("end", f"[-] Incidencia al abrir el reporte escrito: {e}\n")
+        
+        self.consola.see("end")   
 
     # ==========================================
     # MENÚ DESTRUCCION

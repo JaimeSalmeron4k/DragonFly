@@ -2047,26 +2047,10 @@ echo 8 > functions/hid.usb0/report_length
 echo -ne \\\\x05\\\\x01\\\\x09\\\\x06\\\\xa1\\\\x01\\\\x05\\\\x07\\\\x19\\\\xe0\\\\x29\\\\xe7\\\\x15\\\\x00\\\\x25\\\\x01\\\\x75\\\\x01\\\\x95\\\\x08\\\\x81\\\\x02\\\\x95\\\\x01\\\\x75\\\\x08\\\\x81\\\\x03\\\\x95\\\\x05\\\\x75\\\\x01\\\\x05\\\\x08\\\\x19\\\\x01\\\\x29\\\\x05\\\\x91\\\\x02\\\\x95\\\\x01\\\\x75\\\\x03\\\\x91\\\\x03\\\\x95\\\\x06\\\\x75\\\\x08\\\\x15\\\\x00\\\\x25\\\\x65\\\\x05\\\\x07\\\\x19\\\\x00\\\\x29\\\\x65\\\\x81\\\\x00\\\\xc0 > functions/hid.usb0/report_desc
 ln -s functions/hid.usb0 configs/c.1/
 """
-        # Lógica para RNDIS (Windows 10/11 Compatible)
+            # Lógica para RNDIS (Windows)
             elif modo == "rndis":
                 sh_script += """
-# Spoof VID/PID compatible con Windows 10/11 (evita bloqueo de Microsoft)
-echo 0x04E8  > idVendor
-echo 0x6860  > idProduct
-# IAD (Interface Association Descriptor) OBLIGATORIO para RNDIS
-echo 0xEF    > bDeviceClass
-echo 0x02    > bDeviceSubClass
-echo 0x01    > bDeviceProtocol
-# Strings seguros (evita detección de "Linux Foundation")
-echo "Samsung Electronics" > strings/0x409/manufacturer
-echo "RNDIS/Ethernet Gadget" > strings/0x409/product
-echo "123456789ABCDEF0" > strings/0x409/serialnumber
-
 mkdir -p functions/rndis.usb0
-echo 42:63:65:12:34:56 > functions/rndis.usb0/host_addr
-echo 42:63:65:12:34:57 > functions/rndis.usb0/dev_addr
-
-# OS Descriptors para Windows RNDIS
 echo 1 > os_desc/use
 echo 0xcd > os_desc/b_vendor_code
 echo MSFT100 > os_desc/qw_sign
@@ -2076,7 +2060,6 @@ echo 5162001 > functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
 ln -s functions/rndis.usb0 configs/c.1/
 ln -s configs/c.1 os_desc
 """
-
             # Lógica para ECM (Mac/Linux)
             elif modo == "ecm":
                 sh_script += """

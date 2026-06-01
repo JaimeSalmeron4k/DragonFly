@@ -69,15 +69,16 @@ instalar_dependencias() {
     
     # Se añade xserver-xorg, xinit y x11-xserver-utils para el motor gráfico en OS Lite
     # Se eliminó lxterminal por ser innecesario
-    # Se incluyen openbox, fuentes de x11 y fbdev para la pantalla TFT
-
+    # Se incluyen openbox, fuentes de x11, fbdev para la pantalla TFT, netifaces, aioquic y git/openssl
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
         python3 python3-tk python3-serial \
         nmap macchanger aircrack-ng hostapd dnsmasq iptables \
         network-manager bluez rfkill \
         xserver-xorg xinit x11-xserver-utils \
         xserver-xorg-input-libinput xserver-xorg-input-evdev \
-        openbox xfonts-base xfonts-75dpi xserver-xorg-video-fbdev python3-pil python3-pil.imagetk
+        openbox xfonts-base xfonts-75dpi xserver-xorg-video-fbdev \
+        python3-pil python3-pil.imagetk \
+        python3-netifaces python3-aioquic git openssl
 
     print_center "[+] Dependencias instaladas correctamente." "${GREEN}"
     sleep 2
@@ -196,17 +197,93 @@ EOF
 
     # 3.5. Otorgar permisos de ejecución
     print_center "[*] Otorgando permisos de ejecución NOPASSWD en sudoers..." "${RED}"
-    echo "$TARGET_USER ALL=(ALL) NOPASSWD: /usr/bin/python3 $PROJECT_DIR/raspi.py" | sudo tee /etc/sudoers.d/010_dragonfly > /dev/null
+    echo "$TARGET_USER ALL=(ALL) NOPASSWD: /usr/bin/python3 $PROJECT_DIR/raspi.py" | tee /etc/sudoers.d/010_dragonfly > /dev/null
     chmod 0440 /etc/sudoers.d/010_dragonfly
 
     print_center "[+] Entorno de Kiosco y TFT configurado correctamente." "${GREEN}"
     sleep 2
 }
 
+# 4. Clonar e instalar Responder
+configurar_responder() {
+    print_center "[*] Instalando y configurando Responder en /opt/Responder..." "${RED}"
+    
+    if [ ! -d "/opt/Responder" ]; then
+        git clone https://github.com/lgandx/Responder.git /opt/Responder
+    else
+        print_center "[!] Responder ya está clonado. Actualizando repositorio..." "${DARK_GRAY}"
+        cd /opt/Responder && git pull
+    fi
+
+    # Dar permisos al directorio
+    chmod -R 755 /opt/Responder
+
+    print_center "[*] Generando certificados SSL para Responder..." "${RED}"
+    mkdir -p /opt/Responder/certs
+
+    # Generar la llave y el certificado SSL de manera desatendida
+    openssl req -x509 -nodes -newkey rsa:2048 \
+        -keyout /opt/Responder/certs/responder.key \
+        -out /opt/Responder/certs/responder.crt \
+        -days 3650 -subj "/CN=DragonFly" 2>/dev/null
+
+    # Asignar permisos correctos para que Responder pueda leerlos
+    chmod 644 /opt/Responder/certs/responder.crt
+    chmod 600 /opt/Responder/certs/responder.key
+
+    print_center "[+] Responder configurado correctamente." "${GREEN}"
+    sleep 2
+}
+
+# 5. Función para eliminar la instalación por completo
+eliminar_instalacion() {
+    print_center "[*] INICIANDO DESINSTALACIÓN DE DRAGONFLY..." "${RED}"
+    
+    # 5.1 Eliminar Responder
+    if [ -d "/opt/Responder" ]; then
+        rm -rf /opt/Responder
+        print_center "[-] Directorio /opt/Responder eliminado." "${DARK_GRAY}"
+    fi
+
+    # 5.2 Eliminar archivo de gadget y limpiarlo de sysfs
+    if [ -f "/usr/local/bin/usb_gadget.sh" ]; then
+        rm -f /usr/local/bin/usb_gadget.sh
+        print_center "[-] Script de USB Gadget eliminado." "${DARK_GRAY}"
+    fi
+    if [ -d /sys/kernel/config/usb_gadget/g1 ]; then
+        echo "" > /sys/kernel/config/usb_gadget/g1/UDC 2>/dev/null
+        sleep 1
+        rm -rf /sys/kernel/config/usb_gadget/g1
+    fi
+
+    # 5.3 Limpiar Kiosco y configuraciones X11
+    rm -f "$TARGET_HOME/.xinitrc"
+    rm -f /usr/share/X11/xorg.conf.d/99-fbdev.conf
+    
+    # 5.4 Limpiar autostart de .profile
+    PROFILE_FILE="$TARGET_HOME/.profile"
+    if [ -f "$PROFILE_FILE" ]; then
+        # Usa awk para encontrar y eliminar el bloque exacto de 4 líneas que agregamos
+        awk '/# Iniciar entorno grafico para DragonFly automaticamente/{skip=4; next} skip>0{skip--; next} 1' "$PROFILE_FILE" > "${PROFILE_FILE}.tmp" && mv "${PROFILE_FILE}.tmp" "$PROFILE_FILE"
+        chown "$TARGET_USER:$TARGET_USER" "$PROFILE_FILE"
+        print_center "[-] Configuraciones de auto-inicio limpiadas en .profile." "${DARK_GRAY}"
+    fi
+
+    # 5.5 Remover configuración de sudoers
+    if [ -f "/etc/sudoers.d/010_dragonfly" ]; then
+        rm -f /etc/sudoers.d/010_dragonfly
+        print_center "[-] Excepciones de Sudoers removidas." "${DARK_GRAY}"
+    fi
+
+    print_center "[+] SISTEMA LIMPIO." "${GREEN}"
+    print_center "Nota: Las dependencias instaladas por APT se han mantenido para evitar romper otras utilidades del SO." "${WHITE}"
+    sleep 3
+}
+
 # Menú interactivo centrado
 main_menu() {
     if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}Por favor, ejecuta este script como root (sudo ./install.sh)${NC}"
+        echo -e "${RED}Por favor, ejecuta este script como root (sudo ./install-whitout-gui.sh)${NC}"
         exit 1
     fi
 
@@ -215,7 +292,7 @@ main_menu() {
         
         # Opciones centradas visualmente sumando márgenes
         local term_width=$(tput cols 2>/dev/null || echo 80)
-        local menu_width=50
+        local menu_width=52
         local pad_len=$(( (term_width - menu_width) / 2 ))
         [[ $pad_len -lt 0 ]] && pad_len=0
         local padding=$(printf '%*s' "$pad_len" "")
@@ -224,21 +301,24 @@ main_menu() {
         echo "${padding}2) Instalar Solo Dependencias (APT + X11)"
         echo "${padding}3) Configurar Solo USB Gadget"
         echo "${padding}4) Configurar Solo Entorno Kiosco y Sudoers"
-        echo "${padding}5) Salir"
+        echo "${padding}5) Instalar y Configurar Responder"
+        echo "${padding}6) Eliminar Instalación Completa (Desinstalar)"
+        echo "${padding}7) Salir"
         echo ""
         
         # El prompt lo dejamos normal para que el usuario escriba
-        read -p "${padding}Selecciona una opción [1-5]: " opcion
+        read -p "${padding}Selecciona una opción [1-7]: " opcion
 
         case $opcion in
             1)
                 instalar_dependencias
                 configurar_gadget
                 configurar_sistema
+                configurar_responder
                 print_center "¡INSTALACIÓN COMPLETADA CON ÉXITO!" "${GREEN}"
                 echo ""
                 print_center "Se recomienda reiniciar la Raspberry Pi." "${WHITE}"
-                read -p "Presiona ENTER para salir..."
+                read -p "Presiona ENTER para continuar..."
                 break
                 ;;
             2)
@@ -251,6 +331,12 @@ main_menu() {
                 configurar_sistema
                 ;;
             5)
+                configurar_responder
+                ;;
+            6)
+                eliminar_instalacion
+                ;;
+            7)
                 echo ""
                 print_center "Saliendo..." "${DARK_GRAY}"
                 exit 0

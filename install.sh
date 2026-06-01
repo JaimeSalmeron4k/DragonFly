@@ -70,7 +70,7 @@ instalar_dependencias() {
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
         python3 python3-tk python3-serial \
         nmap macchanger aircrack-ng hostapd dnsmasq iptables \
-        network-manager bluez rfkill lxterminal
+        network-manager bluez rfkill lxterminal  python3-pil python3-pil.imagetk 
 
     print_center "[+] Dependencias instaladas correctamente." "${GREEN}"
     sleep 2

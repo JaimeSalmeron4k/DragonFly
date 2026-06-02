@@ -67,10 +67,12 @@ instalar_dependencias() {
     print_center "[*] Actualizando repositorios e instalando dependencias base..." "${RED}"
     apt-get update -y
     
+    # Se agregó python3-netifaces, python3-aioquic y git
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        python3 python3-tk python3-serial \
+        python3 python3-tk python3-serial git \
         nmap macchanger aircrack-ng hostapd dnsmasq iptables \
-        network-manager bluez rfkill lxterminal  python3-pil python3-pil.imagetk 
+        network-manager bluez rfkill lxterminal python3-pil python3-pil.imagetk \
+        python3-netifaces python3-aioquic
 
     print_center "[+] Dependencias instaladas correctamente." "${GREEN}"
     sleep 2
@@ -159,6 +161,67 @@ EOF
     sleep 2
 }
 
+# 4. Instalar y configurar Responder
+instalar_responder() {
+    print_center "[*] Clonando Responder en /opt/..." "${RED}"
+    
+    if [ -d "/opt/Responder" ]; then
+        print_center "[!] Eliminando instalación previa de Responder..." "${DARK_GRAY}"
+        rm -rf /opt/Responder
+    fi
+
+    git clone https://github.com/lgandx/Responder.git /opt/Responder
+    chmod -R 755 /opt/Responder
+
+    print_center "[*] Generando certificados SSL..." "${RED}"
+    mkdir -p /opt/Responder/certs
+    
+    # Silenciar la salida estándar de openssl para no romper la estética de la consola
+    openssl req -x509 -nodes -newkey rsa:2048 \
+        -keyout /opt/Responder/certs/responder.key \
+        -out /opt/Responder/certs/responder.crt \
+        -days 3650 -subj "/CN=DragonFly" 2>/dev/null
+
+    chmod 644 /opt/Responder/certs/responder.crt
+    chmod 600 /opt/Responder/certs/responder.key
+
+    print_center "[+] Responder instalado y configurado correctamente." "${GREEN}"
+    sleep 2
+}
+
+# 5. Desinstalar Todo
+desinstalar_todo() {
+    print_center "!!! ADVERTENCIA !!!" "${RED}"
+    print_center "Esto eliminará Auto-inicio, Gadget USB y Responder." "${WHITE}"
+    
+    local term_width=$(tput cols 2>/dev/null || echo 80)
+    local menu_width=50
+    local pad_len=$(( (term_width - menu_width) / 2 ))
+    [[ $pad_len -lt 0 ]] && pad_len=0
+    local padding=$(printf '%*s' "$pad_len" "")
+
+    read -p "${padding}¿Estás seguro de continuar? (s/n): " confirmar
+    
+    if [[ "$confirmar" =~ ^[Ss]$ ]]; then
+        print_center "[*] Eliminando Auto-inicio..." "${DARK_GRAY}"
+        rm -f "$TARGET_HOME/.config/autostart/raspy.desktop"
+        
+        print_center "[*] Eliminando regla Sudoers..." "${DARK_GRAY}"
+        rm -f /etc/sudoers.d/010_dragonfly
+        
+        print_center "[*] Eliminando script USB Gadget..." "${DARK_GRAY}"
+        rm -f /usr/local/bin/usb_gadget.sh
+        
+        print_center "[*] Eliminando Responder..." "${DARK_GRAY}"
+        rm -rf /opt/Responder
+        
+        print_center "[+] Desinstalación completada." "${GREEN}"
+    else
+        print_center "[-] Operación cancelada." "${DARK_GRAY}"
+    fi
+    sleep 2
+}
+
 # Menú interactivo centrado
 main_menu() {
     if [ "$EUID" -ne 0 ]; then
@@ -180,17 +243,20 @@ main_menu() {
         echo "${padding}2) Instalar Solo Dependencias (APT + Python)"
         echo "${padding}3) Configurar Solo USB Gadget"
         echo "${padding}4) Configurar Solo Auto-Inicio y Sudoers"
-        echo "${padding}5) Salir"
+        echo "${padding}5) Instalar y Configurar Responder"
+        echo "${padding}6) Desinstalar Todo (Auto-inicio, Gadget, Responder)"
+        echo "${padding}7) Salir"
         echo ""
         
         # El prompt lo dejamos normal para que el usuario escriba
-        read -p "${padding}Selecciona una opción [1-5]: " opcion
+        read -p "${padding}Selecciona una opción [1-7]: " opcion
 
         case $opcion in
             1)
                 instalar_dependencias
                 configurar_gadget
                 configurar_sistema
+                instalar_responder
                 print_center "¡INSTALACIÓN COMPLETADA CON ÉXITO!" "${GREEN}"
                 echo ""
                 print_center "Se recomienda reiniciar la Raspberry Pi." "${WHITE}"
@@ -207,6 +273,12 @@ main_menu() {
                 configurar_sistema
                 ;;
             5)
+                instalar_responder
+                ;;
+            6)
+                desinstalar_todo
+                ;;
+            7)
                 echo ""
                 print_center "Saliendo..." "${DARK_GRAY}"
                 exit 0

@@ -1668,6 +1668,11 @@ if __name__ == "__main__":
             
         subprocess.run(["sudo", "systemctl", "restart", "NetworkManager"], stderr=subprocess.DEVNULL)
 
+    
+
+
+
+
     def _wifi_deauth(self):
         self.limpiar_main_frame()
         self.agregar_boton_atras(self.show_wifi_menu)
@@ -1676,13 +1681,20 @@ if __name__ == "__main__":
         scroll = ScrollableFrame(self.main_frame, max_items=10)
         scroll.pack(fill='both', expand=True, padx=2, pady=2)
         
+        self.deauth_iface_btns = []
         for iface in self.obtener_interfaces_red():
-            scroll.add_button(text=iface, command=lambda i=iface: self._deauth_escanear(i),
+            btn = scroll.add_button(text=iface, command=lambda i=iface: self._deauth_escanear(i),
                               style='Red.TButton', width=28)
+            if btn: self.deauth_iface_btns.append(btn)
                               
         self.mostrar_consola(parent=scroll.scrollable_frame)
 
     def _deauth_escanear(self, iface):
+        for btn in getattr(self, 'deauth_iface_btns', []):
+            if btn and btn.winfo_exists():
+                btn.config(style='Gray.TButton')
+                btn.state(['disabled'])
+
         self.wifi_state = {"iface": iface}
         subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["sudo", "airmon-ng", "start", iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1708,6 +1720,7 @@ if __name__ == "__main__":
                 except:
                     pass
         self.after(0, lambda: self._deauth_mostrar_redes(redes))
+
 
     def _deauth_mostrar_redes(self, redes):
         self.limpiar_main_frame()
@@ -1794,18 +1807,22 @@ if __name__ == "__main__":
                             
         self.mostrar_consola(parent=scroll.scrollable_frame)
 
+
+
     def _deauth_ataque_activo(self, red, cliente, count):
         mon = self.wifi_state["mon_iface"]
         self.limpiar_main_frame()
-        # Botón de regreso a la selección de modo (Broadcast / Cliente)
         self.agregar_boton_atras(lambda: self._deauth_seleccionar_modo(red))
         ttk.Label(self.main_frame, text="DEAUTH EN CURSO", style='Title.TLabel').pack(pady=5)
         
         scroll = ScrollableFrame(self.main_frame, max_items=10)
         scroll.pack(fill='both', expand=True, padx=2, pady=2)
         
-        # Botón para detener el ataque
         def detener():
+            if hasattr(self, 'btn_detener_deauth') and self.btn_detener_deauth.winfo_exists():
+                self.btn_detener_deauth.config(style='Gray.TButton')
+                self.btn_detener_deauth.state(['disabled'])
+                
             if self.deauth_proc is not None:
                 try:
                     self.deauth_proc.terminate()
@@ -1813,28 +1830,36 @@ if __name__ == "__main__":
                 except:
                     self.deauth_proc.kill()
                 self.deauth_proc = None
-            self.escribir_consola("[+] Ataque deauth detenido.")
+            
+            self.escribir_consola("[+] Ataque deauth detenido. Restaurando red...")
+            def restore():
+                mon_iface = self.wifi_state.get("mon_iface")
+                if mon_iface:
+                    subprocess.run(["sudo", "airmon-ng", "stop", mon_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["sudo", "systemctl", "restart", "NetworkManager"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.after(0, self.show_wifi_menu)
+                
+            threading.Thread(target=restore, daemon=True).start()
         
-        scroll.add_button(text="DETENER DEAUTH", command=detener,
+        self.btn_detener_deauth = scroll.add_button(text="DETENER DEAUTH", command=detener,
                         style='Danger.TButton', width=28)
         
         self.mostrar_consola(parent=scroll.scrollable_frame)
         
-        # Comando exacto que se ejecutaba antes
         cmd = ["sudo", "aireplay-ng", "--deauth", count, "-a", red['bssid'], "-c", cliente, mon]
         self.escribir_consola(f"\nroot@kali:~# {' '.join(cmd)}")
         
         def run_attack():
-            # Lanzar ataque en un hilo independiente
             self.deauth_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                                 stderr=subprocess.STDOUT, text=True)
             for line in self.deauth_proc.stdout:
                 self.escribir_consola(line.rstrip())
             self.deauth_proc.wait()
-            self.escribir_consola("\n[+] Ataque finalizado.")
+            self.escribir_consola("\n[+] Inyección finalizada. Presiona DETENER para salir.")
             self.deauth_proc = None
         
         threading.Thread(target=run_attack, daemon=True).start()
+
 
 
     def _wifi_explorar_handshakes(self):

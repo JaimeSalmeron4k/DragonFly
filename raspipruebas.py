@@ -1255,13 +1255,22 @@ class RedTeamApp(tk.Tk):
         if len(interfaces) < 2:
             ttk.Label(scroll.scrollable_frame, text="Requiere 2 interfaces.", style='Dark.TLabel').pack()
             return
+            
+        self.evil_ap_btns = []
         for iface in interfaces:
-            scroll.add_button(text=f"AP: {iface}", command=lambda i=iface: self._evil_twin_select_deauth(i),
+            btn = scroll.add_button(text=f"AP: {iface}", command=lambda i=iface: self._evil_twin_select_deauth(i),
                               style='Red.TButton', width=28)
+            if btn: self.evil_ap_btns.append(btn)
                               
         self.mostrar_consola(parent=scroll.scrollable_frame)
 
     def _evil_twin_select_deauth(self, ap_iface):
+        # Bloquear botones del menú de AP
+        for btn in getattr(self, 'evil_ap_btns', []):
+            if btn and btn.winfo_exists():
+                btn.config(style='Gray.TButton')
+                btn.state(['disabled'])
+
         self.wifi_state["ap_iface"] = ap_iface
         self.limpiar_main_frame()
         self.agregar_boton_atras(self._wifi_evil_twin)
@@ -1270,16 +1279,25 @@ class RedTeamApp(tk.Tk):
         scroll = ScrollableFrame(self.main_frame, max_items=10)
         scroll.pack(fill='both', expand=True, padx=2, pady=2)
         
+        self.evil_deauth_btns = []
         for iface in [i for i in self.obtener_interfaces_red() if i != ap_iface]:
-            scroll.add_button(text=iface, command=lambda i=iface: self._evil_twin_escanear_redes(i),
+            btn = scroll.add_button(text=iface, command=lambda i=iface: self._evil_twin_escanear_redes(i),
                               style='Red.TButton', width=28)
+            if btn: self.evil_deauth_btns.append(btn)
                               
         self.mostrar_consola(parent=scroll.scrollable_frame)
 
     def _evil_twin_escanear_redes(self, deauth_iface):
+        # Bloquear botones de interfaces deauth
+        for btn in getattr(self, 'evil_deauth_btns', []):
+            if btn and btn.winfo_exists():
+                btn.config(style='Gray.TButton')
+                btn.state(['disabled'])
+
         self.wifi_state["deauth_iface"] = deauth_iface
         subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["sudo", "airmon-ng", "start", deauth_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # ... El resto de este método queda igual (continúa con mon_deauth y scan_prefix)...
         mon = f"{deauth_iface}mon" if os.path.exists(f"/sys/class/net/{deauth_iface}mon") else deauth_iface
         self.wifi_state["mon_deauth"] = mon
 
@@ -1401,8 +1419,6 @@ class RedTeamApp(tk.Tk):
 
     def _evil_twin_ejecutar(self, red, portal, deauth_mode, cliente_mac=None):
         timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        
-        # FIX CRÍTICO: Convertir a ruta absoluta para que sobreviva al os.chdir() del servidor web
         session_dir = os.path.abspath(os.path.join(BASE_DIR_EVIL, f"Auditoria-{timestamp}"))
         os.makedirs(session_dir, exist_ok=True)
 
@@ -1413,7 +1429,8 @@ class RedTeamApp(tk.Tk):
         scroll = ScrollableFrame(self.main_frame, max_items=10)
         scroll.pack(fill='both', expand=True, padx=2, pady=2)
         
-        scroll.add_button(text="DETENER ATAQUE", command=self._evil_twin_detener,
+        # NUEVO BOTÓN
+        self.btn_detener_evil = scroll.add_button(text="DETENER ATAQUE", command=self._evil_twin_detener_click,
                           style='Danger.TButton', width=28)
                           
         self.mostrar_consola(parent=scroll.scrollable_frame)
@@ -1421,8 +1438,7 @@ class RedTeamApp(tk.Tk):
         self.evil_twin_stop = False
 
         def ataque():
-            import shutil  # Importación segura para copiar directorios
-            
+            import shutil
             self._evil_twin_limpiar_procesos()
             ap_iface = self.wifi_state["ap_iface"]
             deauth_iface = self.wifi_state.get("deauth_iface")
@@ -1598,13 +1614,27 @@ if __name__ == "__main__":
             # Cierre seguro al presionar "DETENER ATAQUE"
             self._evil_twin_detener_procesos()
             self._evil_twin_limpiar_iptables(ap_iface)
-            self.escribir_consola("[+] Evil Twin detenido.")
+            
+            # Restaurar Modo Monitor y NetworkManager
+            mon_deauth = self.wifi_state.get("mon_deauth")
+            if mon_deauth:
+                subprocess.run(["sudo", "airmon-ng", "stop", mon_deauth], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "systemctl", "restart", "NetworkManager"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            self.escribir_consola("[+] Evil Twin detenido y red restaurada.")
+            self.after(0, self.show_wifi_menu)
 
         self.evil_twin_thread = threading.Thread(target=ataque, daemon=True)
         self.evil_twin_thread.start()
 
-    def _evil_twin_detener(self):
+    # Reemplaza el antiguo _evil_twin_detener por este método:
+    def _evil_twin_detener_click(self):
+        if hasattr(self, 'btn_detener_evil') and self.btn_detener_evil.winfo_exists():
+            self.btn_detener_evil.config(style='Gray.TButton')
+            self.btn_detener_evil.state(['disabled'])
+        self.escribir_consola("[*] Deteniendo procesos y restaurando red...")
         self.evil_twin_stop = True
+    
 
     def _evil_twin_detener_procesos(self):
         for nombre, proc in self.evil_twin_procs.items():

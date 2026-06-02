@@ -846,6 +846,7 @@ class RedTeamApp(tk.Tk):
             # Configuración de pesos para garantizar la elasticidad proporcional de las filas y columnas
             grid_frame.grid_columnconfigure(columna, weight=1)
             grid_frame.grid_rowconfigure(fila, weight=1)
+
     # ==========================================
     # MENÚ RECONOCIMIENTO (NMAP) 
     # ==========================================
@@ -868,7 +869,6 @@ class RedTeamApp(tk.Tk):
         entry_target.grid(row=0, column=1, padx=1, pady=1)
         entry_target.bind("<Button-1>", lambda e: TecladoNumerico(self, self.target_ip))
 
-
         ttk.Button(config_frame, text="Set", style='Red.TButton', width=6,
                    command=lambda: self.escribir_consola(f"[+] Target: {self.obtener_target() or 'Inválido'}")).grid(row=0, column=2, padx=1, pady=1)
 
@@ -878,7 +878,7 @@ class RedTeamApp(tk.Tk):
         rango_menu = ttk.OptionMenu(config_frame, self.rango_cidr, self.rango_cidr.get(), "/24", "/16", "/8", style='Dark.TMenubutton')
         rango_menu.grid(row=1, column=2, padx=1, pady=1)
 
-        # Lista única y completa de comandos Nmap (se eliminó la duplicidad)
+        # Lista única y completa de comandos Nmap
         comandos_nmap = [
             ("0. Descubrimiento", "-sn {TARGET} -oN {SESSION}/00_hosts.txt"),
             ("1. Puertos comunes", "-sS -T3 --top-ports 1000 {TARGET} -oN {SESSION}/01_common.txt"),
@@ -895,9 +895,20 @@ class RedTeamApp(tk.Tk):
             ("12. Automatizado", f"-sn {{TARGET}} -oN {{SESSION}}/12a_discovery.txt && nmap -sS -p- -T3 {{TARGET}} -oN {{SESSION}}/12b_ports.txt && nmap -sV -sC {{TARGET}} -oN {{SESSION}}/12c_services.txt")
         ]
 
+        # --- NUEVA LÓGICA: Lista para almacenar las referencias de los botones ---
+        self.nmap_botones_lista = []
+
         for nombre, cmd in comandos_nmap:
-            scroll_cmds.add_button(text=nombre, command=lambda c=cmd: self._ejecutar_nmap(c),
-                                   style='Red.TButton', width=28)
+            btn = scroll_cmds.add_button(text=nombre, command=lambda c=cmd: self._ejecutar_nmap(c),
+                                         style='Red.TButton', width=28)
+            if btn:
+                self.nmap_botones_lista.append(btn)
+
+        # --- NUEVO BOTÓN: Detener Escaneo (Añadido antes de "Ver Resultados") ---
+        self.btn_detener_nmap = ttk.Button(scroll_cmds.scrollable_frame, text="Detener Escaneo", style='Gray.TButton',
+                                           command=self._detener_nmap)
+        self.btn_detener_nmap.pack(pady=(15, 3), fill='x', padx=20)
+        self.btn_detener_nmap.state(['disabled']) # Inicia bloqueado
 
         # Botón explorar y consola inyectados al final del frame deslizable
         ttk.Button(scroll_cmds.scrollable_frame, text="Ver Resultados", style='Gray.TButton',
@@ -911,12 +922,42 @@ class RedTeamApp(tk.Tk):
         if target is None:
             self.escribir_consola("[!] Target inválido.")
             return
+
+        # 1. Bloquear todos los botones de escaneo y cambiarlos a color gris para feedback visual
+        for btn in self.nmap_botones_lista:
+            btn.config(style='Gray.TButton')
+            btn.state(['disabled'])
+        
+        # 2. Habilitar el botón de detener (color de peligro)
+        self.btn_detener_nmap.config(style='Danger.TButton')
+        self.btn_detener_nmap.state(['!disabled'])
+
         if not self.session_dir_nmap:
             timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
             self.session_dir_nmap = os.path.join(BASE_DIR_NMAP, f"Auditoria-{timestamp}")
         os.makedirs(self.session_dir_nmap, exist_ok=True)
+        
         comando = cmd_template.replace("{TARGET}", target).replace("{SESSION}", self.session_dir_nmap)
-        self.ejecutar_comando(f"nmap {comando}")
+
+        # 3. Callback dinámico: Se ejecuta cuando termina el escaneo (o se detiene a la fuerza)
+        def on_finish():
+            # winfo_exists() evita crasheos si el usuario cambió de menú mientras escaneaba
+            for btn in self.nmap_botones_lista:
+                if btn.winfo_exists():
+                    btn.config(style='Red.TButton')
+                    btn.state(['!disabled'])
+            
+            if hasattr(self, 'btn_detener_nmap') and self.btn_detener_nmap.winfo_exists():
+                self.btn_detener_nmap.config(style='Gray.TButton')
+                self.btn_detener_nmap.state(['disabled'])
+
+        self.ejecutar_comando(f"nmap {comando}", callback_after=on_finish)
+
+    def _detener_nmap(self):
+        self.escribir_consola("\n[!] Deteniendo proceso Nmap en curso...")
+        # Matamos el proceso subyacente. Esto hará que self.ejecutar_comando() reciba 
+        # la señal de fin, lance el "on_finish" y la UI se desbloquee automáticamente.
+        subprocess.run(["sudo", "pkill", "nmap"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def _mostrar_explorador_nmap(self):
         self.limpiar_main_frame()

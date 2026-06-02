@@ -1101,14 +1101,23 @@ class RedTeamApp(tk.Tk):
         scroll = ScrollableFrame(self.main_frame, max_items=10)
         scroll.pack(fill='both', expand=True, padx=2, pady=2)
         
+        self.handshake_iface_btns = []
         interfaces = self.obtener_interfaces_red()
         for iface in interfaces:
-            scroll.add_button(text=iface, command=lambda i=iface: self._wifi_escanear_redes_handshake(i), 
+            btn = scroll.add_button(text=iface, command=lambda i=iface: self._wifi_escanear_redes_handshake(i), 
                               style='Red.TButton', width=28)
+            if btn:
+                self.handshake_iface_btns.append(btn)
                               
         self.mostrar_consola(parent=scroll.scrollable_frame)
 
     def _wifi_escanear_redes_handshake(self, iface):
+        # Bloquear los botones de las otras interfaces al hacer clic
+        for btn in getattr(self, 'handshake_iface_btns', []):
+            if btn and btn.winfo_exists():
+                btn.config(style='Gray.TButton')
+                btn.state(['disabled'])
+
         self.wifi_state = {"iface": iface, "mon_iface": None}
         self.escribir_consola(f"[*] Modo monitor en {iface}...")
         subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1180,14 +1189,43 @@ class RedTeamApp(tk.Tk):
         ttk.Label(self.main_frame, text="CLIENTES", style='Title.TLabel').pack(pady=2)
         scroll = ScrollableFrame(self.main_frame, max_items=50)
         scroll.pack(fill='both', expand=True, padx=5, pady=2)
-        scroll.add_button(text="Todos (Broadcast)", style='Danger.TButton', width=28,
+        
+        self.handshake_client_btns = []
+        
+        # Botón para Finalizar y Restaurar Red
+        btn_fin = scroll.add_button(text="FINALIZAR AUDITORÍA", style='Danger.TButton', width=28,
+                          command=self._wifi_finalizar_handshake)
+        if btn_fin: self.handshake_client_btns.append(btn_fin)
+
+        btn_broad = scroll.add_button(text="Todos (Broadcast)", style='Danger.TButton', width=28,
                           command=lambda: self._wifi_iniciar_ataque_handshake("FF:FF:FF:FF:FF:FF"))
+        if btn_broad: self.handshake_client_btns.append(btn_broad)
+        
         for mac in clientes:
-            scroll.add_button(text=mac, style='Gray.TButton', width=28,
+            btn = scroll.add_button(text=mac, style='Gray.TButton', width=28,
                               command=lambda m=mac: self._wifi_iniciar_ataque_handshake(m))
+            if btn: self.handshake_client_btns.append(btn)
+            
         self.mostrar_consola(parent=scroll.scrollable_frame)
         gc.collect()
 
+    def _wifi_finalizar_handshake(self):
+        # Bloquear los botones para evitar duplicados en la UI
+        for btn in getattr(self, 'handshake_client_btns', []):
+            if btn and btn.winfo_exists():
+                btn.config(style='Gray.TButton')
+                btn.state(['disabled'])
+        
+        self.escribir_consola("[*] Finalizando auditoría y restaurando red...")
+        def restore():
+            mon = self.wifi_state.get("mon_iface")
+            if mon:
+                subprocess.run(["sudo", "airmon-ng", "stop", mon], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "systemctl", "restart", "NetworkManager"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Regresar al menú principal de WiFi
+            self.after(0, self.show_wifi_menu)
+            
+        threading.Thread(target=restore, daemon=True).start()
     def _wifi_iniciar_ataque_handshake(self, cliente_mac):
         red = self.wifi_state["target"]
         mon = self.wifi_state["mon_iface"]

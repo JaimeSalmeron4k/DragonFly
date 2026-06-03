@@ -2155,45 +2155,62 @@ if __name__ == "__main__":
         # Limpieza global (en caso de que algún proceso haya quedado zombie)
         subprocess.run(["sudo", "pkill", "-f", "ducky_logic"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-
     def _cambiar_modo_usb(self, modo):
-        self.escribir_consola(f"[*] Preparando perfil USB: {modo.upper()}... ")
+        self.escribir_consola(f"[*] Preparando perfil USB: {modo.upper()}...")
 
         cfg = "/boot/firmware/config.txt" if os.path.exists("/boot/firmware/config.txt") else "/boot/config.txt"
         gadget_script = "/usr/local/bin/usb_gadget.sh"
         service_path = "/etc/systemd/system/usb_gadget.service"
 
-        # 1. Limpiar configuraciones dwc2 previas para evitar duplicados en config.txt
+        # 1. Crear el servicio systemd si no existe
+        if not os.path.exists(service_path):
+            self.escribir_consola("[*] Creando servicio systemd para el gadget...")
+            servicio_systemd = """[Unit]
+Description=USB HID/Net Gadget Initialization
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/local/bin/usb_gadget.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
+"""
+            subprocess.run(f"sudo sh -c 'echo \"{servicio_systemd}\" > {service_path}'", shell=True)
+            subprocess.run("sudo systemctl daemon-reload", shell=True)
+
+        # 2. Limpiar configuración dwc2
         subprocess.run(f"sudo sed -i '/dtoverlay=dwc2/d' {cfg}", shell=True)
 
         if modo == "host":
             subprocess.run(f"sudo sh -c 'echo \"dtoverlay=dwc2,dr_mode=host\" >> {cfg}'", shell=True)
             subprocess.run("sudo systemctl disable usb_gadget.service", shell=True, stderr=subprocess.DEVNULL)
-            self.escribir_consola("[*] Controlador configurado como Host puro (Antena/Teclado externo). ")
+            self.escribir_consola("[*] Controlador configurado como Host puro (Antena/Teclado externo).")
         else:
             subprocess.run(f"sudo sh -c 'echo \"dtoverlay=dwc2,dr_mode=peripheral\" >> {cfg}'", shell=True)
+            subprocess.run("sudo systemctl enable usb_gadget.service", shell=True, stderr=subprocess.DEVNULL)
             
-            # --- GENERADOR DINÁMICO DE LIBCOMPOSITE CORREGIDO ---
-            sh_script = """#!/bin/bash
-# Esperar a que el módulo dwc2 esté listo
-sleep 2
+            # --- GENERADOR DINÁMICO DE LIBCOMPOSITE ---
+            # Este script borra la configuración previa en memoria RAM (configfs) y monta la nueva
+            sh_script = f"""#!/bin/bash
 modprobe libcomposite
 cd /sys/kernel/config/usb_gadget/
 
 # LIMPIEZA TOTAL DE GADGETS PREVIOS
 if [ -d dragonfly ]; then
-    echo "" > dragonfly/UDC 2>/dev/null
-    rm -f dragonfly/configs/c.1/hid.usb0 2>/dev/null
-    rm -f dragonfly/configs/c.1/rndis.usb0 2>/dev/null
-    rm -f dragonfly/configs/c.1/ecm.usb0 2>/dev/null
-    rm -f dragonfly/os_desc/c.1 2>/dev/null
-    rm -rf dragonfly/configs/c.1/strings/0x409 2>/dev/null
-    rm -rf dragonfly/configs/c.1 2>/dev/null
-    rm -rf dragonfly/functions/hid.usb0 2>/dev/null
-    rm -rf dragonfly/functions/rndis.usb0 2>/dev/null
-    rm -rf dragonfly/functions/ecm.usb0 2>/dev/null
-    rm -rf dragonfly/strings/0x409 2>/dev/null
-    rmdir dragonfly 2>/dev/null
+  echo "" > dragonfly/UDC
+  rm -f dragonfly/configs/c.1/hid.usb0
+  rm -f dragonfly/configs/c.1/rndis.usb0
+  rm -f dragonfly/configs/c.1/ecm.usb0
+  rm -f dragonfly/os_desc/c.1
+  rmdir dragonfly/configs/c.1/strings/0x409
+  rmdir dragonfly/configs/c.1
+  rmdir dragonfly/functions/hid.usb0 2>/dev/null
+  rmdir dragonfly/functions/rndis.usb0 2>/dev/null
+  rmdir dragonfly/functions/ecm.usb0 2>/dev/null
+  rmdir dragonfly/strings/0x409
+  rmdir dragonfly
 fi
 
 mkdir -p dragonfly
@@ -2202,7 +2219,6 @@ echo 0x1d6b > idVendor
 echo 0x0104 > idProduct
 echo 0x0100 > bcdDevice
 echo 0x0200 > bcdUSB
-
 mkdir -p strings/0x409
 echo "fedcba9876543210" > strings/0x409/serialnumber
 echo "DragonFly" > strings/0x409/manufacturer
@@ -2214,7 +2230,7 @@ echo "DragonFly" > strings/0x409/manufacturer
                 sh_script += "echo \"DragonFly RNDIS Ethernet\" > strings/0x409/product\n"
             elif modo == "ecm":
                 sh_script += "echo \"DragonFly CDC ECM Ethernet\" > strings/0x409/product\n"
-            
+
             sh_script += """
 mkdir -p configs/c.1/strings/0x409
 echo "Config 1" > configs/c.1/strings/0x409/configuration
@@ -2227,17 +2243,13 @@ mkdir -p functions/hid.usb0
 echo 1 > functions/hid.usb0/protocol
 echo 1 > functions/hid.usb0/subclass
 echo 8 > functions/hid.usb0/report_length
-echo -ne \\x05\\x01\\x09\\x06\\xa1\\x01\\x05\\x07\\x19\\xe0\\x29\\xe7\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x08\\x81\\x02\\x95\\x01\\x75\\x08\\x81\\x03\\x95\\x05\\x75\\x01\\x05\\x08\\x19\\x01\\x29\\x05\\x91\\x02\\x95\\x01\\x75\\x03\\x91\\x03\\x95\\x06\\x75\\x08\\x15\\x00\\x25\\x65\\x05\\x07\\x19\\x00\\x29\\x65\\x81\\x00\\xc0 > functions/hid.usb0/report_desc
+echo -ne \\\\x05\\\\x01\\\\x09\\\\x06\\\\xa1\\\\x01\\\\x05\\\\x07\\\\x19\\\\xe0\\\\x29\\\\xe7\\\\x15\\\\x00\\\\x25\\\\x01\\\\x75\\\\x01\\\\x95\\\\x08\\\\x81\\\\x02\\\\x95\\\\x01\\\\x75\\\\x08\\\\x81\\\\x03\\\\x95\\\\x05\\\\x75\\\\x01\\\\x05\\\\x08\\\\x19\\\\x01\\\\x29\\\\x05\\\\x91\\\\x02\\\\x95\\\\x01\\\\x75\\\\x03\\\\x91\\\\x03\\\\x95\\\\x06\\\\x75\\\\x08\\\\x15\\\\x00\\\\x25\\\\x65\\\\x05\\\\x07\\\\x19\\\\x00\\\\x29\\\\x65\\\\x81\\\\x00\\\\xc0 > functions/hid.usb0/report_desc
 ln -s functions/hid.usb0 configs/c.1/
 """
-            # Lógica para RNDIS (Windows) - CON MACS EXPLÍCITAS
+            # Lógica para RNDIS (Windows)
             elif modo == "rndis":
                 sh_script += """
 mkdir -p functions/rndis.usb0
-# MACs explícitas son CRÍTICAS para Windows
-echo "02:dd:11:22:33:44" > functions/rndis.usb0/dev_addr
-echo "02:dd:11:22:33:45" > functions/rndis.usb0/host_addr
-
 echo 1 > os_desc/use
 echo 0xcd > os_desc/b_vendor_code
 echo MSFT100 > os_desc/qw_sign
@@ -2247,15 +2259,13 @@ echo 5162001 > functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
 ln -s functions/rndis.usb0 configs/c.1/
 ln -s configs/c.1 os_desc
 """
-            # Lógica para ECM (Mac/Linux) - CON MACS EXPLÍCITAS
+            # Lógica para ECM (Mac/Linux)
             elif modo == "ecm":
                 sh_script += """
 mkdir -p functions/ecm.usb0
-# MACs explícitas para evitar conflictos de red en Linux
-echo "02:dd:11:22:33:46" > functions/ecm.usb0/dev_addr
-echo "02:dd:11:22:33:47" > functions/ecm.usb0/host_addr
 ln -s functions/ecm.usb0 configs/c.1/
 """
+
             # Comando final para encender el USB
             sh_script += "ls /sys/class/udc > UDC\n"
 
@@ -2265,31 +2275,9 @@ ln -s functions/ecm.usb0 configs/c.1/
             
             subprocess.run(f"sudo mv /tmp/usb_gadget.sh {gadget_script}", shell=True)
             subprocess.run(f"sudo chmod +x {gadget_script}", shell=True)
-            
-            # Crear servicio systemd con timing corregido (multi-user.target es más seguro que sysinit)
-            servicio_systemd = """[Unit]
-Description=USB HID/Net Gadget Initialization
-After=systemd-modules-load.service local-fs.target
-Wants=systemd-modules-load.service
+            self.escribir_consola(f"[*] Perfil generado y limpiado. (Modo: {modo.upper()})")
 
-[Service]
-Type=oneshot
-ExecStart=/bin/bash /usr/local/bin/usb_gadget.sh
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-"""
-            with open("/tmp/usb_gadget.service", "w") as f:
-                f.write(servicio_systemd)
-            
-            subprocess.run("sudo mv /tmp/usb_gadget.service /etc/systemd/system/usb_gadget.service", shell=True)
-            subprocess.run("sudo systemctl daemon-reload", shell=True)
-            subprocess.run("sudo systemctl enable usb_gadget.service", shell=True, stderr=subprocess.DEVNULL)
-            
-            self.escribir_consola(f"[*] Perfil generado y limpiado. (Modo: {modo.upper()}) ")
-
-        self.escribir_consola("[+] Aplicado. REINICIANDO el sistema en 3 segundos... ")
+        self.escribir_consola("[+] Aplicado. REINICIANDO el sistema en 3 segundos...")
         self.after(3000, lambda: subprocess.run("sudo reboot", shell=True))
     
     # =========================================================================

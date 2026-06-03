@@ -2041,7 +2041,7 @@ if __name__ == "__main__":
         self.agregar_boton_atras(self.show_inicio_menu)
         ttk.Label(self.main_frame, text="PAYLOADS DUCKY", style='Title.TLabel').pack(pady=2)
 
-        # --- NUEVO: Menú para seleccionar el teclado (US / ES) ---
+        # --- Menú para seleccionar el teclado (US / ES) ---
         config_frame = ttk.Frame(self.main_frame, style='Dark.TFrame')
         config_frame.pack(fill='x', padx=5, pady=2)
         
@@ -2052,19 +2052,30 @@ if __name__ == "__main__":
 
         payloads_dir = "payloads"
         os.makedirs(payloads_dir, exist_ok=True)
-        archivos = [f for f in os.listdir(payloads_dir) if f.endswith(".txt")]
+        archivos = sorted([f for f in os.listdir(payloads_dir) if f.endswith(".txt")])
 
         scroll = ScrollableFrame(self.main_frame, max_items=50)
         scroll.pack(fill='both', expand=True, padx=5, pady=2)
+        
+        # --- NUEVA LÓGICA: Lista para rastrear botones y bloquearlos ---
+        self.ducky_botones_lista = []
         
         if not archivos:
             ttk.Label(scroll.scrollable_frame, text="No hay payloads.", style='Dark.TLabel').pack()
         else:
             for archivo in archivos:
                 ruta = os.path.join(payloads_dir, archivo)
-                scroll.add_button(text=archivo, style='Red.TButton', width=28,
-                                  command=lambda r=ruta: self._ejecutar_ducky(r))
-                                  
+                btn = scroll.add_button(text=archivo, style='Red.TButton', width=28,
+                                        command=lambda r=ruta: self._ejecutar_ducky(r))
+                if btn:
+                    self.ducky_botones_lista.append(btn)
+
+        # --- NUEVO BOTÓN: Detener Payload ---
+        self.btn_detener_ducky = ttk.Button(scroll.scrollable_frame, text="Detener Payload", style='Gray.TButton',
+                                            command=self._detener_ducky)
+        self.btn_detener_ducky.pack(pady=(15, 3), fill='x', padx=20)
+        self.btn_detener_ducky.state(['disabled']) # Inicia bloqueado
+
         self.mostrar_consola(parent=scroll.scrollable_frame)
         gc.collect()
 
@@ -2075,20 +2086,74 @@ if __name__ == "__main__":
         return self._ducky_logic
 
     def _ejecutar_ducky(self, ruta):
-        ducky = self._import_ducky_logic()
         layout_seleccionado = self.ducky_layout.get() # Obtener si es 'us' o 'es'
         
+        # 1. Bloquear todos los botones de payloads cambiándolos a gris
+        for btn in getattr(self, 'ducky_botones_lista', []):
+            if btn.winfo_exists():
+                btn.config(style='Gray.TButton')
+                btn.state(['disabled'])
+        
+        # 2. Habilitar el botón de detener poniéndolo en color Peligro/Advertencia
+        if hasattr(self, 'btn_detener_ducky') and self.btn_detener_ducky.winfo_exists():
+            self.btn_detener_ducky.config(style='Danger.TButton')
+            self.btn_detener_ducky.state(['!disabled'])
+
         self.escribir_consola(f"\n[+] Exec: {os.path.basename(ruta)} ({layout_seleccionado.upper()})")
 
         def run():
             time.sleep(2)
+            # En lugar de bloquear la GUI usando el módulo importado, ejecutamos 
+            # la misma lógica vía subproceso para atrapar todo el output y tener un proceso matable.
+            script_cmd = f"import ducky_logic; ducky_logic.ejecutar_script_ducky('{ruta}', layout='{layout_seleccionado}')"
+            comando = ["sudo", "python3", "-c", script_cmd]
+            
             try:
-                # Pasar el layout seleccionado a la lógica del Ducky
-                ducky.ejecutar_script_ducky(ruta, layout=layout_seleccionado) 
-                self.escribir_consola("[+] Hecho.")
+                self.ducky_proc = subprocess.Popen(comando, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                # Lee y envía en tiempo real todo el output de ducky_logic a la consola visual
+                for line in self.ducky_proc.stdout:
+                    self.escribir_consola(line.rstrip())
+                self.ducky_proc.wait()
             except Exception as e:
-                self.escribir_consola(f"[!] Error: {e}")
+                self.after(0, lambda e=e: self.escribir_consola(f"[!] Error: {e}"))
+            finally:
+                self.after(0, on_finish)
+
+        def on_finish():
+            # 3. Restaurar los botones a su estado rojo y activo
+            for btn in getattr(self, 'ducky_botones_lista', []):
+                if btn.winfo_exists():
+                    btn.config(style='Red.TButton')
+                    btn.state(['!disabled'])
+            
+            # Bloquear de nuevo el botón de detener
+            if hasattr(self, 'btn_detener_ducky') and self.btn_detener_ducky.winfo_exists():
+                self.btn_detener_ducky.config(style='Gray.TButton')
+                self.btn_detener_ducky.state(['disabled'])
+                
+            self.ducky_proc = None
+
         threading.Thread(target=run, daemon=True).start()
+
+    def _detener_ducky(self):
+        """Detiene de forma forzosa la inyección del payload Ducky en curso."""
+        self.escribir_consola("\n[!] Deteniendo Inyección Ducky...")
+        
+        # Inmediatamente bloqueamos el botón para evitar doble clic
+        if hasattr(self, 'btn_detener_ducky') and self.btn_detener_ducky.winfo_exists():
+            self.btn_detener_ducky.config(style='Gray.TButton')
+            self.btn_detener_ducky.state(['disabled'])
+
+        # Matamos el proceso seguro
+        if hasattr(self, 'ducky_proc') and self.ducky_proc:
+            try:
+                self.ducky_proc.terminate()
+                self.ducky_proc.wait(timeout=2)
+            except:
+                self.ducky_proc.kill()
+        
+        # Limpieza global (en caso de que algún proceso haya quedado zombie)
+        subprocess.run(["sudo", "pkill", "-f", "ducky_logic"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def _cambiar_modo_usb(self, modo):
         self.escribir_consola(f"[*] Preparando perfil USB: {modo.upper()}...")
